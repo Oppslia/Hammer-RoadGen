@@ -179,8 +179,8 @@ public sealed class Viewport2D : Control
         for (int i = startI; i <= endI; i++)
         {
             double wx = i * snap;
-            PointF a = WorldToScreenF(new Vec3(wx, minY, 0));
-            PointF b = WorldToScreenF(new Vec3(wx, maxY, 0));
+            PointF a = WorldToScreenF(PlaneVec(wx, minY, 0));
+            PointF b = WorldToScreenF(PlaneVec(wx, maxY, 0));
             Pen pen = i == 0 ? zero : (i % 8 == 0 ? major : minor);
             g.DrawLine(pen, a, b);
         }
@@ -190,8 +190,8 @@ public sealed class Viewport2D : Control
         for (int j = startJ; j <= endJ; j++)
         {
             double wy = j * snap;
-            PointF a = WorldToScreenF(new Vec3(minX, wy, 0));
-            PointF b = WorldToScreenF(new Vec3(maxX, wy, 0));
+            PointF a = WorldToScreenF(PlaneVec(minX, wy, 0));
+            PointF b = WorldToScreenF(PlaneVec(maxX, wy, 0));
             Pen pen = j == 0 ? zero : (j % 8 == 0 ? major : minor);
             g.DrawLine(pen, a, b);
         }
