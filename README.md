@@ -3,6 +3,16 @@
 A Windows desktop tool that builds winding 3D roads out of Hammer **displacements**
 and exports them as a Source `.vmf` file.
 
+<img width="2560" height="1392" alt="image" src="https://github.com/user-attachments/assets/2ac941aa-e93a-4d8f-8f64-b6fc33b668fb" />
+
+---
+
+<img width="678" height="707" alt="image" src="https://github.com/user-attachments/assets/3a99b4eb-245e-44a2-bba6-1f39a1b7955e" />
+
+---
+
+<img width="1490" height="1081" alt="image" src="https://github.com/user-attachments/assets/5938ebfb-529a-4aab-bad7-5e4474a71665" />
+
 You place control points on a 3D curve, give each one a width and a bank (roll)
 angle, and RoadGen emits a chain of displacement brushes whose top faces follow the
 curve exactly. Adjacent segments share identical boundary vertices, so the road
