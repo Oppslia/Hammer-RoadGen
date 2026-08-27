@@ -70,6 +70,8 @@ On the right:
 
 Click **Generate VMF...** to write the map.
 
+# Make sure to select all of the road objects in hammer, then open the material **Face Edit Sheet** and click **Fit**. All your textures should be aligned now!
+
 ## Files & workflow
 
 RoadGen uses two file types, and they play different roles:
