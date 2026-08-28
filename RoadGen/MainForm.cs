@@ -100,6 +100,9 @@ public sealed class MainForm : Form
         strip.Items.Add(new ToolStripSeparator());
         strip.Items.Add(ToolButton("Generate VMF...", (s, e) => Generate()));
 
+        // Experimental brush export (deprecated). Uncomment to enable.
+        // strip.Items.Add(ToolButton("Generate Brushes...", (s, e) => GenerateBrushes()));
+
         Controls.Add(strip);
     }
 
@@ -618,17 +621,43 @@ public sealed class MainForm : Form
 
     private void RemovePoint()
     {
-        if (_selectedIndex < 0 || _selectedIndex >= _doc.Points.Count)
+        // Deletes every selected point. Falls back to the single tracked
+        // selection when the ListView has no selection (e.g. Delete key).
+        var selected = new List<int>();
+        foreach (int i in SelectedIndices())
         {
-            return;
+            if (i >= 0 && i < _doc.Points.Count && !selected.Contains(i))
+            {
+                selected.Add(i);
+            }
         }
 
+        if (selected.Count == 0)
+        {
+            if (_selectedIndex < 0 || _selectedIndex >= _doc.Points.Count)
+            {
+                return;
+            }
+
+            selected.Add(_selectedIndex);
+        }
+
+        selected.Sort();
+        int anchor = selected[0];
+
         _undo.RecordSingle();
-        _doc.Points.RemoveAt(_selectedIndex);
-        int next = Math.Min(_selectedIndex, _doc.Points.Count - 1);
+
+        // Remove from the end so earlier indices stay valid.
+        for (int k = selected.Count - 1; k >= 0; k--)
+        {
+            _doc.Points.RemoveAt(selected[k]);
+        }
+
         _selectedIndex = -1;
         _doc.NotifyChanged();
         RefreshList();
+
+        int next = Math.Min(anchor, _doc.Points.Count - 1);
         if (next >= 0)
         {
             SelectPoint(next);
@@ -636,6 +665,7 @@ public sealed class MainForm : Form
         else
         {
             LoadPointIntoEditors();
+            InvalidateAll();
         }
 
         UpdateUndoButtons();
@@ -1074,6 +1104,11 @@ public sealed class MainForm : Form
                 AddPoint();
                 return true;
             case Keys.Delete:
+                if (ActiveControl is TextBox)
+                {
+                    return base.ProcessCmdKey(ref msg, keyData);
+                }
+
                 RemovePoint();
                 return true;
             case Keys.Control | Keys.F:
@@ -1120,6 +1155,43 @@ public sealed class MainForm : Form
             MessageBox.Show(this, "Generation failed:\n" + ex.Message, "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
+
+    // Experimental brush export (deprecated). Uncomment this method, the
+    // toolbar button in BuildToolStrip(), and remove the [Obsolete] markers
+    // in BrushSegment / RoadGenerator to re-enable.
+    /*
+    private void GenerateBrushes()
+    {
+        if (_doc.Points.Count < 2)
+        {
+            MessageBox.Show(this, "Add at least two control points first.", "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new SaveFileDialog
+        {
+            Filter = "Hammer Files (.vmf)|*.vmf",
+            FileName = "road_brushes.vmf",
+            Title = "Generate road brush VMF"
+        };
+
+        if (dlg.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            string vmf = RoadGenerator.GenerateBrushes(_doc);
+            System.IO.File.WriteAllText(dlg.FileName, vmf);
+            MessageBox.Show(this, $"Wrote {dlg.FileName}", "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Generation failed:\n" + ex.Message, "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+    */
 
     protected override void OnShown(EventArgs e)
     {
