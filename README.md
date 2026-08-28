@@ -45,6 +45,11 @@ dotnet run
 ```
 
 ## Using the tool
+It is highly recommended to save your progress as a trackfile due to the problematic vertex drift hammer is known for. 
+This track file tells RoadGen exactly how to build the road you made, so you don't have to worry about losing your progress if your seams become misaligned later while building your map.
+Just regenerate your road and place it in your map again!
+
+Importing vmfs is a little jank as of now, so I would always advise to save the road as a .trk file, but you can certainly import a road from a RoadGen generated vmf.
 
 The window is laid out like Hammer:
 
