@@ -383,6 +383,16 @@ public sealed class Viewport2D : Control
                 g.DrawLine(wall, WorldToScreenF(mesh.Right[i]), WorldToScreenF(mesh.BottomRight[i]));
             }
         }
+
+        // Bottom face: draw connecting ribs under the road so the bottom is
+        // visible in the side/front views too (mirrors the 3D view's bottom).
+        if (showThickness && hasThickness && _doc.Settings.SolidBottom && !ShowSegments)
+        {
+            for (int i = 0; i < mesh.Center.Count; i += 4)
+            {
+                g.DrawLine(rib, WorldToScreenF(mesh.BottomLeft[i]), WorldToScreenF(mesh.BottomRight[i]));
+            }
+        }
     }
 
     private void DrawSegments(Graphics g)
