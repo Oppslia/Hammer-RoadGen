@@ -64,6 +64,8 @@ public sealed class Viewport2D : Control
 
     public void SetDocument(RoadDocument doc) => _doc = doc;
 
+    public bool ShowSegments;
+
     public void SetPlane(PlaneKind plane)
     {
         _plane = plane;
@@ -139,6 +141,7 @@ public sealed class Viewport2D : Control
 
         RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 24, _doc.Settings.Thickness);
         DrawRoad(g, mesh);
+        DrawSegments(g);
         DrawPoints(g);
         DrawHint(g);
         DrawBox(g);
@@ -301,6 +304,43 @@ public sealed class Viewport2D : Control
             for (int i = 0; i < mesh.Center.Count; i += 4)
             {
                 g.DrawLine(wall, WorldToScreenF(mesh.Right[i]), WorldToScreenF(mesh.BottomRight[i]));
+            }
+        }
+    }
+
+    private void DrawSegments(Graphics g)
+    {
+        if (!ShowSegments || _doc == null || _doc.Points.Count < 2)
+        {
+            return;
+        }
+
+        var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings);
+        double thickness = _doc.Settings.Thickness;
+        Vec3 down = new Vec3(0, 0, -1) * thickness;
+        using Pen pen = new Pen(Color.FromArgb(255, 190, 70), 1.1f);
+        foreach (SegmentLayout.Segment seg in segments)
+        {
+            Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
+            Vec3 a2 = a + down, b2 = b + down, c2 = c + down, d2 = d + down;
+
+            // Top face: the base parallelogram Hammer reconstructs.
+            g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(b));
+            g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(c));
+            g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(d));
+            g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(a));
+
+            if (thickness > 0)
+            {
+                g.DrawLine(pen, WorldToScreenF(a2), WorldToScreenF(b2));
+                g.DrawLine(pen, WorldToScreenF(b2), WorldToScreenF(c2));
+                g.DrawLine(pen, WorldToScreenF(c2), WorldToScreenF(d2));
+                g.DrawLine(pen, WorldToScreenF(d2), WorldToScreenF(a2));
+
+                g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(a2));
+                g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(b2));
+                g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(c2));
+                g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(d2));
             }
         }
     }

@@ -28,15 +28,33 @@ public sealed class MainForm : Form
     private readonly NumericUpDown _numBank = new NumericUpDown();
 
     private readonly NumericUpDown _numThickness = new NumericUpDown();
-    private readonly NumericUpDown _numSegmentLength = new NumericUpDown();
     private readonly NumericUpDown _numTexScale = new NumericUpDown();
-    private readonly NumericUpDown _numLightmap = new NumericUpDown();
-    private readonly NumericUpDown _numSnap = new NumericUpDown();
+    private readonly ComboBox _cboLightmap = new ComboBox();
+    private readonly ComboBox _cboSnap = new ComboBox();
     private readonly ComboBox _cboPower = new ComboBox();
     private readonly TextBox _txtMaterial = new TextBox();
     private readonly CheckBox _chkSolidLeft = new CheckBox();
     private readonly CheckBox _chkSolidRight = new CheckBox();
     private readonly CheckBox _chkSolidBottom = new CheckBox();
+
+    // Per-editor increment controls ("Increment/Decrement interval" section).
+    private readonly CheckBox _chkIncX = new CheckBox();
+    private readonly CheckBox _chkIncY = new CheckBox();
+    private readonly CheckBox _chkIncZ = new CheckBox();
+    private readonly CheckBox _chkIncWidth = new CheckBox();
+    private readonly CheckBox _chkIncBank = new CheckBox();
+    private readonly NumericUpDown _numIncX = new NumericUpDown();
+    private readonly NumericUpDown _numIncY = new NumericUpDown();
+    private readonly NumericUpDown _numIncZ = new NumericUpDown();
+    private readonly NumericUpDown _numIncWidth = new NumericUpDown();
+    private readonly NumericUpDown _numIncBank = new NumericUpDown();
+
+    // "See disps" preview toggle + live displacement count.
+    private readonly CheckBox _chkShowDisps = new CheckBox();
+    private readonly Label _lblDispCount = new Label();
+    private readonly Button _btnPrevOpt = new Button();
+    private readonly Button _btnNextOpt = new Button();
+    private readonly ToolTip _tips = new ToolTip();
 
     private int _selectedIndex = -1;
     private bool _loading;
@@ -61,6 +79,7 @@ public sealed class MainForm : Form
 
         BuildToolStrip();
         BuildLayout();
+        ConfigureIncrementControls();
         WireEvents();
 
         SeedDefaultRoad();
@@ -187,7 +206,7 @@ public sealed class MainForm : Form
         {
             Text = "Control Points",
             Dock = DockStyle.Top,
-            Height = 360,
+            Height = 440,
             Padding = new Padding(6)
         };
 
@@ -226,28 +245,60 @@ public sealed class MainForm : Form
         AddField(editor, 2, "Z", _numZ);
         AddField(editor, 3, "Width", _numWidth);
         AddField(editor, 4, "Bank", _numBank);
-        _numBank.Increment = 8;
         pointsGroup.Controls.Add(editor);
+
+        // Increment/Decrement interval section, docked below the editors.
+        var incGroup = new GroupBox
+        {
+            Text = "Increment/Decrement interval",
+            Dock = DockStyle.Bottom,
+            Height = 74,
+            Padding = new Padding(6, 2, 6, 4)
+        };
+
+        var incTable = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 5,
+            RowCount = 2,
+            Margin = new Padding(0)
+        };
+        for (int c = 0; c < 5; c++)
+        {
+            incTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+        }
+
+        incTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        incTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+
+        AddIncrementColumn(incTable, 0, _chkIncX, _numIncX);
+        AddIncrementColumn(incTable, 1, _chkIncY, _numIncY);
+        AddIncrementColumn(incTable, 2, _chkIncZ, _numIncZ);
+        AddIncrementColumn(incTable, 3, _chkIncWidth, _numIncWidth);
+        AddIncrementColumn(incTable, 4, _chkIncBank, _numIncBank);
+
+        incGroup.Controls.Add(incTable);
+        pointsGroup.Controls.Add(incGroup);
 
         var settingsGroup = new GroupBox
         {
             Text = "Road Settings",
             Dock = DockStyle.Top,
-            Height = 275,
+            Height = 312,
             Padding = new Padding(6)
         };
 
         var table = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 189,
+            Height = 162,
             ColumnCount = 2,
-            RowCount = 7,
+            RowCount = 6,
             Padding = new Padding(0)
         };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int r = 0; r < 7; r++)
+        for (int r = 0; r < 6; r++)
         {
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
         }
@@ -256,20 +307,29 @@ public sealed class MainForm : Form
         _cboPower.DropDownStyle = ComboBoxStyle.DropDownList;
         _cboPower.SelectedIndex = 1;
 
+        _cboSnap.Items.AddRange(new object[] { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 });
+        _cboSnap.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboSnap.SelectedIndex = 6; // 64
+
+        _cboLightmap.Items.AddRange(new object[] { 1, 2, 4, 8, 16, 32, 64, 128, 256 });
+        _cboLightmap.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboLightmap.SelectedIndex = 4; // 16
+
         _txtMaterial.Text = _doc.Settings.Material;
 
         AddSettingRow(table, 0, "Power", _cboPower);
         AddSettingRow(table, 1, "Material", _txtMaterial);
         AddSettingRow(table, 2, "Thickness", _numThickness);
-        AddSettingRow(table, 3, "Segment length", _numSegmentLength);
-        AddSettingRow(table, 4, "Texture scale", _numTexScale);
-        AddSettingRow(table, 5, "Lightmap scale", _numLightmap);
-        AddSettingRow(table, 6, "Grid snap (0=off)", _numSnap);
+        AddSettingRow(table, 3, "Texture scale", _numTexScale);
+        _numTexScale.Increment = 0.25m;
+        AddSettingRow(table, 4, "Lightmap scale", _cboLightmap);
+        AddSettingRow(table, 5, "Grid snap", _cboSnap);
 
         var solidRoadsGroup = new GroupBox
         {
             Text = "Solid Roads",
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
+            Height = 52,
             Padding = new Padding(6)
         };
 
@@ -291,6 +351,68 @@ public sealed class MainForm : Form
         solidFlow.Controls.Add(_chkSolidBottom);
         solidRoadsGroup.Controls.Add(solidFlow);
 
+        // Optimization section: sits under Solid Roads inside Road Settings and
+        // replaces the old "Optimization scale" numeric field.
+        var optGroup = new GroupBox
+        {
+            Text = "Optimization",
+            Dock = DockStyle.Fill,
+            Padding = new Padding(6)
+        };
+
+        _chkShowDisps.Text = "See disps";
+        _chkShowDisps.AutoSize = true;
+        _chkShowDisps.Checked = false;
+
+        _lblDispCount.AutoSize = true;
+        _lblDispCount.ForeColor = Color.LightGray;
+        _lblDispCount.Margin = new Padding(12, 0, 0, 0);
+        _lblDispCount.Text = "0 disps";
+
+        var optFlow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 26,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false
+        };
+        optFlow.Controls.Add(_chkShowDisps);
+        optFlow.Controls.Add(_lblDispCount);
+
+        var optButtons = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0)
+        };
+        optButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        optButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+
+        _btnPrevOpt.Dock = DockStyle.Fill;
+        _btnPrevOpt.FlatStyle = FlatStyle.System;
+        _btnPrevOpt.Margin = new Padding(0, 0, 3, 0);
+        _btnPrevOpt.Text = "◀ -";
+        _btnPrevOpt.Enabled = false;
+        _btnPrevOpt.Click += (s, e) => JumpToPreviousOptimization();
+
+        _btnNextOpt.Dock = DockStyle.Fill;
+        _btnNextOpt.FlatStyle = FlatStyle.System;
+        _btnNextOpt.Margin = new Padding(3, 0, 0, 0);
+        _btnNextOpt.Text = "- ▶";
+        _btnNextOpt.Enabled = false;
+        _btnNextOpt.Click += (s, e) => JumpToNextOptimization();
+
+        optButtons.Controls.Add(_btnPrevOpt, 0, 0);
+        optButtons.Controls.Add(_btnNextOpt, 1, 0);
+
+        optGroup.Controls.Add(optButtons);
+        optGroup.Controls.Add(optFlow);
+
+        // Docking is applied in reverse z-order, so add in reverse of desired
+        // layout: table at the top, Solid Roads below it, Optimization filling
+        // the remainder.
+        settingsGroup.Controls.Add(optGroup);
         settingsGroup.Controls.Add(solidRoadsGroup);
         settingsGroup.Controls.Add(table);
 
@@ -358,6 +480,108 @@ public sealed class MainForm : Form
         table.Controls.Add(control, 1, row);
     }
 
+    private static void AddIncrementColumn(TableLayoutPanel table, int col, CheckBox chk, NumericUpDown num)
+    {
+        chk.Text = "Grid";
+        chk.Dock = DockStyle.Fill;
+        chk.AutoSize = false;
+        chk.TextAlign = ContentAlignment.MiddleCenter;
+        chk.ForeColor = Color.LightGray;
+        chk.Margin = new Padding(2, 0, 2, 0);
+
+        num.Dock = DockStyle.Fill;
+        num.DecimalPlaces = 2;
+        num.Minimum = 0.01m;
+        num.Maximum = 100000;
+        num.Increment = 1;
+        num.Margin = new Padding(2, 0, 2, 0);
+
+        table.Controls.Add(chk, col, 0);
+        table.Controls.Add(num, col, 1);
+    }
+
+    private void ConfigureIncrementControls()
+    {
+        // X/Y/Z/Width default to "use grid" (checked); Bank defaults to a custom 4.
+        _chkIncX.Checked = true;
+        _chkIncY.Checked = true;
+        _chkIncZ.Checked = true;
+        _chkIncWidth.Checked = true;
+        _chkIncBank.Checked = false;
+
+        _numIncX.Value = 64;
+        _numIncY.Value = 64;
+        _numIncZ.Value = 64;
+        _numIncWidth.Value = 64;
+        _numIncBank.Value = 4;
+
+        UpdateIncrements();
+    }
+
+    private void UpdateIncrements()
+    {
+        double grid = _doc.Settings.Snap > 0 ? _doc.Settings.Snap : 64;
+
+        // Thickness always follows the grid snap.
+        _numThickness.Increment = (decimal)grid;
+
+        ApplyIncrement(_numX, _chkIncX, _numIncX, grid);
+        ApplyIncrement(_numY, _chkIncY, _numIncY, grid);
+        ApplyIncrement(_numZ, _chkIncZ, _numIncZ, grid);
+        ApplyIncrement(_numWidth, _chkIncWidth, _numIncWidth, grid);
+        ApplyIncrement(_numBank, _chkIncBank, _numIncBank, grid);
+    }
+
+    private static void ApplyIncrement(NumericUpDown target, CheckBox chk, NumericUpDown custom, double grid)
+    {
+        if (chk.Checked)
+        {
+            target.Increment = (decimal)grid;
+            custom.Visible = false;
+        }
+        else
+        {
+            target.Increment = custom.Value;
+            custom.Visible = true;
+        }
+    }
+
+    private static int SnapIndex(double snap)
+    {
+        int[] values = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 };
+        int best = 6;
+        double bestDiff = double.MaxValue;
+        for (int i = 0; i < values.Length; i++)
+        {
+            double diff = Math.Abs(values[i] - snap);
+            if (diff < bestDiff)
+            {
+                bestDiff = diff;
+                best = i;
+            }
+        }
+
+        return best;
+    }
+
+    private static int LightmapIndex(int lightmap)
+    {
+        int[] values = { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
+        int best = 4;
+        double bestDiff = double.MaxValue;
+        for (int i = 0; i < values.Length; i++)
+        {
+            double diff = Math.Abs(values[i] - lightmap);
+            if (diff < bestDiff)
+            {
+                bestDiff = diff;
+                best = i;
+            }
+        }
+
+        return best;
+    }
+
     // ---------------------------------------------------------------- events
 
     private void WireEvents()
@@ -368,6 +592,7 @@ public sealed class MainForm : Form
             _top.Invalidate();
             _front.Invalidate();
             _side.Invalidate();
+            UpdatePreviewInfo();
 
             if (!_suppressDirty)
             {
@@ -439,13 +664,21 @@ public sealed class MainForm : Form
         _cboPower.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _txtMaterial.TextChanged += (s, e) => ApplySettingsFromControls();
         _numThickness.ValueChanged += (s, e) => ApplySettingsFromControls();
-        _numSegmentLength.ValueChanged += (s, e) => ApplySettingsFromControls();
         _numTexScale.ValueChanged += (s, e) => ApplySettingsFromControls();
-        _numLightmap.ValueChanged += (s, e) => ApplySettingsFromControls();
-        _numSnap.ValueChanged += (s, e) => ApplySettingsFromControls();
+        _cboLightmap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
+        _cboSnap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _chkSolidLeft.CheckedChanged += (s, e) => ApplySettingsFromControls();
         _chkSolidRight.CheckedChanged += (s, e) => ApplySettingsFromControls();
         _chkSolidBottom.CheckedChanged += (s, e) => ApplySettingsFromControls();
+
+        _chkShowDisps.CheckedChanged += (s, e) =>
+        {
+            _v3d.ShowSegments = _chkShowDisps.Checked;
+            _top.ShowSegments = _chkShowDisps.Checked;
+            _front.ShowSegments = _chkShowDisps.Checked;
+            _side.ShowSegments = _chkShowDisps.Checked;
+            InvalidateAll();
+        };
 
         AttachUndoBatch(_numX);
         AttachUndoBatch(_numY);
@@ -453,10 +686,19 @@ public sealed class MainForm : Form
         AttachUndoBatch(_numWidth);
         AttachUndoBatch(_numBank);
         AttachUndoBatch(_numThickness);
-        AttachUndoBatch(_numSegmentLength);
         AttachUndoBatch(_numTexScale);
-        AttachUndoBatch(_numLightmap);
-        AttachUndoBatch(_numSnap);
+        AttachUndoBatch(_cboLightmap);
+        AttachUndoBatch(_cboSnap);
+        _chkIncX.CheckedChanged += (s, e) => UpdateIncrements();
+        _chkIncY.CheckedChanged += (s, e) => UpdateIncrements();
+        _chkIncZ.CheckedChanged += (s, e) => UpdateIncrements();
+        _chkIncWidth.CheckedChanged += (s, e) => UpdateIncrements();
+        _chkIncBank.CheckedChanged += (s, e) => UpdateIncrements();
+        _numIncX.ValueChanged += (s, e) => UpdateIncrements();
+        _numIncY.ValueChanged += (s, e) => UpdateIncrements();
+        _numIncZ.ValueChanged += (s, e) => UpdateIncrements();
+        _numIncWidth.ValueChanged += (s, e) => UpdateIncrements();
+        _numIncBank.ValueChanged += (s, e) => UpdateIncrements();
         AttachUndoBatch(_chkSolidLeft);
         AttachUndoBatch(_chkSolidRight);
         AttachUndoBatch(_chkSolidBottom);
@@ -641,6 +883,7 @@ public sealed class MainForm : Form
 
         InvalidateAll();
         FrameAll();
+        UpdatePreviewInfo();
     }
 
     private void AddPoint()
@@ -1006,13 +1249,13 @@ public sealed class MainForm : Form
         s.Power = (int)_cboPower.SelectedItem;
         s.Material = _txtMaterial.Text;
         s.Thickness = (double)_numThickness.Value;
-        s.SegmentLength = (double)_numSegmentLength.Value;
         s.TextureScale = (double)_numTexScale.Value;
-        s.LightmapScale = (int)_numLightmap.Value;
-        s.Snap = (double)_numSnap.Value;
+        s.LightmapScale = (int)_cboLightmap.SelectedItem;
+        s.Snap = (int)_cboSnap.SelectedItem;
         s.SolidLeft = _chkSolidLeft.Checked;
         s.SolidRight = _chkSolidRight.Checked;
         s.SolidBottom = _chkSolidBottom.Checked;
+        UpdateIncrements();
         _doc.NotifyChanged();
     }
 
@@ -1040,14 +1283,112 @@ public sealed class MainForm : Form
         _cboPower.SelectedIndex = Math.Max(0, Array.IndexOf(new object[] { 2, 3, 4 }, s.Power));
         _txtMaterial.Text = s.Material;
         _numThickness.Value = (decimal)s.Thickness;
-        _numSegmentLength.Value = (decimal)s.SegmentLength;
         _numTexScale.Value = (decimal)s.TextureScale;
-        _numLightmap.Value = (decimal)s.LightmapScale;
-        _numSnap.Value = (decimal)s.Snap;
+        _cboLightmap.SelectedIndex = LightmapIndex(s.LightmapScale);
+        _cboSnap.SelectedIndex = SnapIndex(s.Snap);
         _chkSolidLeft.Checked = s.SolidLeft;
         _chkSolidRight.Checked = s.SolidRight;
         _chkSolidBottom.Checked = s.SolidBottom;
         _loading = false;
+        UpdateIncrements();
+    }
+
+    private void UpdatePreviewInfo()
+    {
+        if (_lblDispCount == null)
+        {
+            return;
+        }
+
+        int count = _doc.Points.Count >= 2 ? SegmentLayout.CountSegments(_doc.Points, _doc.Settings.SegmentLength) : 0;
+        _lblDispCount.Text = $"{count} disps";
+
+        if (_btnNextOpt == null || _btnPrevOpt == null)
+        {
+            return;
+        }
+
+        if (_doc.Points.Count < 2)
+        {
+            _btnNextOpt.Text = "- ▶";
+            _btnNextOpt.Enabled = false;
+            _btnPrevOpt.Text = "◀ -";
+            _btnPrevOpt.Enabled = false;
+            return;
+        }
+
+        double current = Math.Max(1.0, _doc.Settings.SegmentLength);
+
+        double next = SegmentLayout.NextBreakpoint(_doc.Points, current, out int nextCount);
+        if (next > current && nextCount < count)
+        {
+            _btnNextOpt.Text = $"{nextCount} disps ▶";
+            _btnNextOpt.Enabled = true;
+            _tips.SetToolTip(_btnNextOpt, $"Fewer displacements: {nextCount} at scale {Math.Ceiling(next * 100) / 100:0.##}");
+        }
+        else
+        {
+            _btnNextOpt.Text = "Fully optimized";
+            _btnNextOpt.Enabled = false;
+        }
+
+        double prev = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out int prevCount);
+        if (prev < current && prevCount > count)
+        {
+            _btnPrevOpt.Text = $"◀ {prevCount} disps";
+            _btnPrevOpt.Enabled = true;
+            _tips.SetToolTip(_btnPrevOpt, $"More displacements: {prevCount} at scale {Math.Floor(prev * 100) / 100:0.##}");
+        }
+        else
+        {
+            _btnPrevOpt.Text = "◀ Max";
+            _btnPrevOpt.Enabled = false;
+        }
+    }
+
+    private void JumpToNextOptimization()
+    {
+        if (_doc.Points.Count < 2)
+        {
+            return;
+        }
+
+        double current = Math.Max(1.0, _doc.Settings.SegmentLength);
+        double next = SegmentLayout.NextBreakpoint(_doc.Points, current, out _);
+        if (next <= current)
+        {
+            return;
+        }
+
+        // Round up to 2 decimals so the stored value is always at or past the
+        // breakpoint. Rounding to nearest can land just below the threshold,
+        // leaving the count unchanged and the button looking stuck.
+        _undo.RecordSingle();
+        _doc.Settings.SegmentLength = Math.Ceiling(next * 100) / 100;
+        _doc.NotifyChanged();
+        UpdateUndoButtons();
+    }
+
+    private void JumpToPreviousOptimization()
+    {
+        if (_doc.Points.Count < 2)
+        {
+            return;
+        }
+
+        double current = Math.Max(1.0, _doc.Settings.SegmentLength);
+        double prev = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out _);
+        if (prev >= current)
+        {
+            return;
+        }
+
+        // Round down to 2 decimals so the stored value is at or below the
+        // breakpoint, ensuring the brush count actually increases.
+        _undo.RecordSingle();
+        _doc.Settings.SegmentLength = Math.Max(1.0, Math.Floor(prev * 100) / 100);
+        _doc.NotifyChanged();
+        UpdateUndoButtons();
     }
 
     private void RefreshList()

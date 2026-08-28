@@ -95,18 +95,5 @@ public static class RoadGenerator
     }
 
     private static double ApproximateArcLength(IReadOnlyList<RoadPoint> pts, int segment)
-    {
-        const int samples = 32;
-        double length = 0;
-        Vec3 previous = RoadCurve.Position(pts, segment);
-        for (int i = 1; i <= samples; i++)
-        {
-            double t = segment + (double)i / samples;
-            Vec3 current = RoadCurve.Position(pts, t);
-            length += (current - previous).Length;
-            previous = current;
-        }
-
-        return length;
-    }
+        => RoadCurve.ArcLength(pts, segment);
 }

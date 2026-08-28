@@ -47,6 +47,8 @@ public sealed class Viewport3D : Control
 
     public void SetDocument(RoadDocument doc) => _doc = doc;
 
+    public bool ShowSegments;
+
     public void FrameAll()
     {
         _autoTarget = true;
@@ -83,6 +85,7 @@ public sealed class Viewport3D : Control
         {
             RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 20, _doc.Settings.Thickness);
             DrawRoad(g, mesh);
+            DrawSegments(g);
             DrawPoints(g);
         }
 
@@ -203,6 +206,43 @@ public sealed class Viewport3D : Control
             for (int i = 0; i < mesh.Center.Count; i += 5)
             {
                 Draw3DLine(g, mesh.Right[i], mesh.BottomRight[i], wall);
+            }
+        }
+    }
+
+    private void DrawSegments(Graphics g)
+    {
+        if (!ShowSegments || _doc == null || _doc.Points.Count < 2)
+        {
+            return;
+        }
+
+        var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings);
+        double thickness = _doc.Settings.Thickness;
+        Vec3 down = new Vec3(0, 0, -1) * thickness;
+        using Pen pen = new Pen(Color.FromArgb(255, 190, 70), 1.2f);
+        foreach (SegmentLayout.Segment seg in segments)
+        {
+            Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
+            Vec3 a2 = a + down, b2 = b + down, c2 = c + down, d2 = d + down;
+
+            // Top face: the base parallelogram Hammer reconstructs.
+            Draw3DLine(g, a, b, pen);
+            Draw3DLine(g, b, c, pen);
+            Draw3DLine(g, c, d, pen);
+            Draw3DLine(g, d, a, pen);
+
+            if (thickness > 0)
+            {
+                Draw3DLine(g, a2, b2, pen);
+                Draw3DLine(g, b2, c2, pen);
+                Draw3DLine(g, c2, d2, pen);
+                Draw3DLine(g, d2, a2, pen);
+
+                Draw3DLine(g, a, a2, pen);
+                Draw3DLine(g, b, b2, pen);
+                Draw3DLine(g, c, c2, pen);
+                Draw3DLine(g, d, d2, pen);
             }
         }
     }
