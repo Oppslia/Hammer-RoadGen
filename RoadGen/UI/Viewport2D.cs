@@ -340,10 +340,14 @@ public sealed class Viewport2D : Control
         DrawPolyline(g, mesh.Right, edge);
         DrawPolyline(g, mesh.Center, center);
 
-        // Ribs across the road every 4 preview samples.
-        for (int i = 0; i < mesh.Center.Count; i += 4)
+        // Ribs across the road every 4 preview samples. Hidden in "See disps"
+        // mode, where the displacement brush outlines replace them as the bands.
+        if (!ShowSegments)
         {
-            g.DrawLine(rib, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.Right[i]));
+            for (int i = 0; i < mesh.Center.Count; i += 4)
+            {
+                g.DrawLine(rib, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.Right[i]));
+            }
         }
 
         // In the Top view the road is seen from above, so the thickness (walls and

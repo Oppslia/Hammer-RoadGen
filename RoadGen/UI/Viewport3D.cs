@@ -177,9 +177,12 @@ public sealed class Viewport3D : Control
         DrawPolyline(g, mesh.Right, edge);
         DrawPolyline(g, mesh.Center, center);
 
-        for (int i = 0; i < mesh.Center.Count; i += 5)
+        if (!ShowSegments)
         {
-            Draw3DLine(g, mesh.Left[i], mesh.Right[i], rib);
+            for (int i = 0; i < mesh.Center.Count; i += 5)
+            {
+                Draw3DLine(g, mesh.Left[i], mesh.Right[i], rib);
+            }
         }
 
         // Each side's bottom edge is drawn independently so the walls terminate on a
@@ -195,7 +198,7 @@ public sealed class Viewport3D : Control
             DrawPolyline(g, mesh.BottomRight, wall);
         }
 
-        if (hasThickness && _doc.Settings.SolidBottom)
+        if (!ShowSegments && hasThickness && _doc.Settings.SolidBottom)
         {
             for (int i = 0; i < mesh.Center.Count; i += 5)
             {
