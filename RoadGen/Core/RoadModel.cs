@@ -39,7 +39,7 @@ public sealed class RoadSettings
     public bool SolidRight = true;
 
     /// <summary>Draw/export the bottom face.</summary>
-    public bool SolidBottom = true;
+    public bool SolidBottom = false;
 
     /// <summary>Target length of each generated displacement segment. Smaller = smoother,
     /// larger = fewer displacements.</summary>
@@ -53,6 +53,20 @@ public sealed class RoadSettings
 
     /// <summary>Editor grid snap in units. 0 disables snapping.</summary>
     public double Snap = 64;
+
+    // Per-editor increment/decrement interval settings (editor UI only, not part
+    // of the exported VMF). UseGrid = "Grid" box checked (increment follows the
+    // grid snap); otherwise the custom value below is used.
+    public bool IncUseGridX = true;
+    public bool IncUseGridY = true;
+    public bool IncUseGridZ = true;
+    public bool IncUseGridWidth = true;
+    public bool IncUseGridBank = false;
+    public double IncCustomX = 64;
+    public double IncCustomY = 64;
+    public double IncCustomZ = 64;
+    public double IncCustomWidth = 64;
+    public double IncCustomBank = 4;
 
     /// <summary>Snap a value to the configured grid.</summary>
     public double Snapped(double value)

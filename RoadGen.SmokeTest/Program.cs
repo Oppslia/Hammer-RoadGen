@@ -44,7 +44,7 @@ Console.WriteLine($"  first imported: {imported[0].Position} width={imported[0].
 // Native .trk round-trip.
 string trkPath = Path.Combine(AppContext.BaseDirectory, "sample_road.trk");
 TrackFile.Save(doc, trkPath);
-RoadDocument reloaded = TrackFile.Load(trkPath);
+RoadDocument reloaded = TrackFile.Load(trkPath).Document;
 Console.WriteLine($"Track round-trip: {reloaded.Points.Count} points, power={reloaded.Settings.Power}, material={reloaded.Settings.Material}");
 
 Console.WriteLine("First 600 chars:");

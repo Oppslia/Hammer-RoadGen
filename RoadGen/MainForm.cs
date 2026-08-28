@@ -56,6 +56,14 @@ public sealed class MainForm : Form
     private readonly Button _btnNextOpt = new Button();
     private readonly ToolTip _tips = new ToolTip();
 
+    // Hold-to-repeat for the optimization buttons. A single press-and-hold is one
+    // undo step: first auto-repeat after a debounce, then a steady interval.
+    private readonly System.Windows.Forms.Timer _repeatTimer = new System.Windows.Forms.Timer();
+    private bool _repeatActive;
+    private bool _repeatDirectionNext;
+    private const int RepeatDebounceMs = 500;
+    private const int RepeatIntervalMs = 250;
+
     private int _selectedIndex = -1;
     private bool _loading;
     private string _currentTrackPath;
@@ -81,6 +89,7 @@ public sealed class MainForm : Form
         BuildLayout();
         ConfigureIncrementControls();
         WireEvents();
+        _repeatTimer.Tick += OnOptRepeatTick;
 
         SeedDefaultRoad();
         _suppressDirty = true;
@@ -206,7 +215,7 @@ public sealed class MainForm : Form
         {
             Text = "Control Points",
             Dock = DockStyle.Top,
-            Height = 440,
+            Height = 422,
             Padding = new Padding(6)
         };
 
@@ -284,7 +293,7 @@ public sealed class MainForm : Form
         {
             Text = "Road Settings",
             Dock = DockStyle.Top,
-            Height = 312,
+            Height = 320,
             Padding = new Padding(6)
         };
 
@@ -330,7 +339,7 @@ public sealed class MainForm : Form
             Text = "Solid Roads",
             Dock = DockStyle.Top,
             Height = 52,
-            Padding = new Padding(6)
+            Padding = new Padding(6, 2, 6, 4)
         };
 
         var solidFlow = new FlowLayoutPanel
@@ -394,14 +403,16 @@ public sealed class MainForm : Form
         _btnPrevOpt.Margin = new Padding(0, 0, 3, 0);
         _btnPrevOpt.Text = "◀ -";
         _btnPrevOpt.Enabled = false;
-        _btnPrevOpt.Click += (s, e) => JumpToPreviousOptimization();
+        _btnPrevOpt.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) StartOptRepeat(next: false); };
+        _btnPrevOpt.MouseUp += (s, e) => StopOptRepeat();
 
         _btnNextOpt.Dock = DockStyle.Fill;
         _btnNextOpt.FlatStyle = FlatStyle.System;
         _btnNextOpt.Margin = new Padding(3, 0, 0, 0);
         _btnNextOpt.Text = "- ▶";
         _btnNextOpt.Enabled = false;
-        _btnNextOpt.Click += (s, e) => JumpToNextOptimization();
+        _btnNextOpt.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) StartOptRepeat(next: true); };
+        _btnNextOpt.MouseUp += (s, e) => StopOptRepeat();
 
         optButtons.Controls.Add(_btnPrevOpt, 0, 0);
         optButtons.Controls.Add(_btnNextOpt, 1, 0);
@@ -502,20 +513,50 @@ public sealed class MainForm : Form
 
     private void ConfigureIncrementControls()
     {
-        // X/Y/Z/Width default to "use grid" (checked); Bank defaults to a custom 4.
-        _chkIncX.Checked = true;
-        _chkIncY.Checked = true;
-        _chkIncZ.Checked = true;
-        _chkIncWidth.Checked = true;
-        _chkIncBank.Checked = false;
+        // Seed the increment controls from the document defaults. Events are wired
+        // later in WireEvents, so no handlers fire here yet.
+        _loading = true;
+        LoadIncrementsIntoControls();
+        _loading = false;
+        UpdateIncrements();
+    }
 
-        _numIncX.Value = 64;
-        _numIncY.Value = 64;
-        _numIncZ.Value = 64;
-        _numIncWidth.Value = 64;
-        _numIncBank.Value = 4;
+    private void LoadIncrementsIntoControls()
+    {
+        var s = _doc.Settings;
+        _chkIncX.Checked = s.IncUseGridX;
+        _chkIncY.Checked = s.IncUseGridY;
+        _chkIncZ.Checked = s.IncUseGridZ;
+        _chkIncWidth.Checked = s.IncUseGridWidth;
+        _chkIncBank.Checked = s.IncUseGridBank;
+        _numIncX.Value = (decimal)s.IncCustomX;
+        _numIncY.Value = (decimal)s.IncCustomY;
+        _numIncZ.Value = (decimal)s.IncCustomZ;
+        _numIncWidth.Value = (decimal)s.IncCustomWidth;
+        _numIncBank.Value = (decimal)s.IncCustomBank;
+    }
+
+    private void ApplyIncrementsFromControls()
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        var s = _doc.Settings;
+        s.IncUseGridX = _chkIncX.Checked;
+        s.IncUseGridY = _chkIncY.Checked;
+        s.IncUseGridZ = _chkIncZ.Checked;
+        s.IncUseGridWidth = _chkIncWidth.Checked;
+        s.IncUseGridBank = _chkIncBank.Checked;
+        s.IncCustomX = (double)_numIncX.Value;
+        s.IncCustomY = (double)_numIncY.Value;
+        s.IncCustomZ = (double)_numIncZ.Value;
+        s.IncCustomWidth = (double)_numIncWidth.Value;
+        s.IncCustomBank = (double)_numIncBank.Value;
 
         UpdateIncrements();
+        _doc.NotifyChanged();
     }
 
     private void UpdateIncrements()
@@ -689,16 +730,26 @@ public sealed class MainForm : Form
         AttachUndoBatch(_numTexScale);
         AttachUndoBatch(_cboLightmap);
         AttachUndoBatch(_cboSnap);
-        _chkIncX.CheckedChanged += (s, e) => UpdateIncrements();
-        _chkIncY.CheckedChanged += (s, e) => UpdateIncrements();
-        _chkIncZ.CheckedChanged += (s, e) => UpdateIncrements();
-        _chkIncWidth.CheckedChanged += (s, e) => UpdateIncrements();
-        _chkIncBank.CheckedChanged += (s, e) => UpdateIncrements();
-        _numIncX.ValueChanged += (s, e) => UpdateIncrements();
-        _numIncY.ValueChanged += (s, e) => UpdateIncrements();
-        _numIncZ.ValueChanged += (s, e) => UpdateIncrements();
-        _numIncWidth.ValueChanged += (s, e) => UpdateIncrements();
-        _numIncBank.ValueChanged += (s, e) => UpdateIncrements();
+        _chkIncX.CheckedChanged += (s, e) => ApplyIncrementsFromControls();
+        _chkIncY.CheckedChanged += (s, e) => ApplyIncrementsFromControls();
+        _chkIncZ.CheckedChanged += (s, e) => ApplyIncrementsFromControls();
+        _chkIncWidth.CheckedChanged += (s, e) => ApplyIncrementsFromControls();
+        _chkIncBank.CheckedChanged += (s, e) => ApplyIncrementsFromControls();
+        _numIncX.ValueChanged += (s, e) => ApplyIncrementsFromControls();
+        _numIncY.ValueChanged += (s, e) => ApplyIncrementsFromControls();
+        _numIncZ.ValueChanged += (s, e) => ApplyIncrementsFromControls();
+        _numIncWidth.ValueChanged += (s, e) => ApplyIncrementsFromControls();
+        _numIncBank.ValueChanged += (s, e) => ApplyIncrementsFromControls();
+        AttachUndoBatch(_chkIncX);
+        AttachUndoBatch(_chkIncY);
+        AttachUndoBatch(_chkIncZ);
+        AttachUndoBatch(_chkIncWidth);
+        AttachUndoBatch(_chkIncBank);
+        AttachUndoBatch(_numIncX);
+        AttachUndoBatch(_numIncY);
+        AttachUndoBatch(_numIncZ);
+        AttachUndoBatch(_numIncWidth);
+        AttachUndoBatch(_numIncBank);
         AttachUndoBatch(_chkSolidLeft);
         AttachUndoBatch(_chkSolidRight);
         AttachUndoBatch(_chkSolidBottom);
@@ -710,12 +761,12 @@ public sealed class MainForm : Form
 
     private void SeedDefaultRoad()
     {
-        _doc.Points.Add(new RoadPoint(new Vec3(0, 0, 0), 256, 0));
-        _doc.Points.Add(new RoadPoint(new Vec3(512, 256, 32), 256, 12));
-        _doc.Points.Add(new RoadPoint(new Vec3(1024, 0, 96), 256, -12));
-        _doc.Points.Add(new RoadPoint(new Vec3(1536, 256, 160), 256, 14));
-        _doc.Points.Add(new RoadPoint(new Vec3(2048, 0, 224), 256, -14));
-        _doc.Points.Add(new RoadPoint(new Vec3(2560, 256, 288), 256, 0));
+        _doc.Points.Add(new RoadPoint(new Vec3(-512, 256, -320), 256, 16));
+        _doc.Points.Add(new RoadPoint(new Vec3(0, 256, -256), 256, 12));
+        _doc.Points.Add(new RoadPoint(new Vec3(576, 0, -128), 256, -4));
+        _doc.Points.Add(new RoadPoint(new Vec3(1088, 320, 192), 256, -10));
+        _doc.Points.Add(new RoadPoint(new Vec3(1600, 128, 128), 256, -14));
+        _doc.Points.Add(new RoadPoint(new Vec3(2112, 384, 320), 256, 0));
     }
 
     private void NewRoad()
@@ -749,13 +800,31 @@ public sealed class MainForm : Form
 
         try
         {
-            RoadDocument loaded = TrackFile.Load(dlg.FileName);
+            TrackFile.TrackLoadResult result = TrackFile.Load(dlg.FileName);
             _undo.RecordSingle();
-            ApplyDocument(loaded);
+            ApplyDocument(result.Document);
             _currentTrackPath = dlg.FileName;
             _dirty = false;
             AfterDocumentLoaded();
             UpdateTitle();
+
+            if (result.NeedsUpgrade)
+            {
+                var answer = MessageBox.Show(
+                    this,
+                    $"This track was saved with an older format (v{result.FromVersion}).\n" +
+                    $"Upgrade it to the current format (v{result.ToVersion})? Your road is unchanged.",
+                    "RoadGen",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (answer == DialogResult.Yes)
+                {
+                    TrackFile.Save(_doc, dlg.FileName);
+                    _dirty = false;
+                    UpdateTitle();
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -865,6 +934,19 @@ public sealed class MainForm : Form
         s.TextureScale = loaded.Settings.TextureScale;
         s.LightmapScale = loaded.Settings.LightmapScale;
         s.Snap = loaded.Settings.Snap;
+        s.SolidLeft = loaded.Settings.SolidLeft;
+        s.SolidRight = loaded.Settings.SolidRight;
+        s.SolidBottom = loaded.Settings.SolidBottom;
+        s.IncUseGridX = loaded.Settings.IncUseGridX;
+        s.IncUseGridY = loaded.Settings.IncUseGridY;
+        s.IncUseGridZ = loaded.Settings.IncUseGridZ;
+        s.IncUseGridWidth = loaded.Settings.IncUseGridWidth;
+        s.IncUseGridBank = loaded.Settings.IncUseGridBank;
+        s.IncCustomX = loaded.Settings.IncCustomX;
+        s.IncCustomY = loaded.Settings.IncCustomY;
+        s.IncCustomZ = loaded.Settings.IncCustomZ;
+        s.IncCustomWidth = loaded.Settings.IncCustomWidth;
+        s.IncCustomBank = loaded.Settings.IncCustomBank;
     }
 
     private void AfterDocumentLoaded()
@@ -1289,6 +1371,7 @@ public sealed class MainForm : Form
         _chkSolidLeft.Checked = s.SolidLeft;
         _chkSolidRight.Checked = s.SolidRight;
         _chkSolidBottom.Checked = s.SolidBottom;
+        LoadIncrementsIntoControls();
         _loading = false;
         UpdateIncrements();
     }
@@ -1346,48 +1429,97 @@ public sealed class MainForm : Form
         }
     }
 
-    private void JumpToNextOptimization()
+    /// <summary>Apply one optimization step (next = fewer disps, else more). Undo
+    /// bookkeeping is handled by the caller: a single record for a click, or a
+    /// BeginBatch/EndBatch pair for a hold.</summary>
+    private bool StepOptimization(bool next)
     {
         if (_doc.Points.Count < 2)
         {
-            return;
+            return false;
         }
 
         double current = Math.Max(1.0, _doc.Settings.SegmentLength);
-        double next = SegmentLayout.NextBreakpoint(_doc.Points, current, out _);
-        if (next <= current)
+        if (next)
         {
-            return;
+            double target = SegmentLayout.NextBreakpoint(_doc.Points, current, out _);
+            if (target <= current)
+            {
+                return false;
+            }
+
+            // Round up so the stored value lands at or past the breakpoint.
+            _doc.Settings.SegmentLength = Math.Ceiling(target * 100) / 100;
+        }
+        else
+        {
+            double target = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out _);
+            if (target >= current)
+            {
+                return false;
+            }
+
+            // Round down so the stored value lands at or below the breakpoint.
+            _doc.Settings.SegmentLength = Math.Max(1.0, Math.Floor(target * 100) / 100);
         }
 
-        // Round up to 2 decimals so the stored value is always at or past the
-        // breakpoint. Rounding to nearest can land just below the threshold,
-        // leaving the count unchanged and the button looking stuck.
-        _undo.RecordSingle();
-        _doc.Settings.SegmentLength = Math.Ceiling(next * 100) / 100;
         _doc.NotifyChanged();
-        UpdateUndoButtons();
+        return true;
     }
 
-    private void JumpToPreviousOptimization()
+    private void StartOptRepeat(bool next)
     {
+        if (_repeatActive)
+        {
+            return;
+        }
+
+        // Don't start (or record a no-op undo) if there is no step to take.
         if (_doc.Points.Count < 2)
         {
             return;
         }
 
         double current = Math.Max(1.0, _doc.Settings.SegmentLength);
-        double prev = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out _);
-        if (prev >= current)
+        bool canStep = next
+            ? SegmentLayout.NextBreakpoint(_doc.Points, current, out _) > current
+            : SegmentLayout.PreviousBreakpoint(_doc.Points, current, out _) < current;
+        if (!canStep)
         {
             return;
         }
 
-        // Round down to 2 decimals so the stored value is at or below the
-        // breakpoint, ensuring the brush count actually increases.
-        _undo.RecordSingle();
-        _doc.Settings.SegmentLength = Math.Max(1.0, Math.Floor(prev * 100) / 100);
-        _doc.NotifyChanged();
+        _repeatActive = true;
+        _repeatDirectionNext = next;
+
+        // Commit any in-progress batch (e.g. a still-focused numeric editor) so the
+        // optimization steps become their own independent undo unit.
+        _undo.EndBatch();
+        _undo.BeginBatch();
+        StepOptimization(next);
+        _repeatTimer.Interval = RepeatDebounceMs;
+        _repeatTimer.Start();
+    }
+
+    private void OnOptRepeatTick(object sender, EventArgs e)
+    {
+        _repeatTimer.Interval = RepeatIntervalMs;
+        if (!StepOptimization(_repeatDirectionNext))
+        {
+            StopOptRepeat();
+        }
+    }
+
+    private void StopOptRepeat()
+    {
+        if (!_repeatActive)
+        {
+            return;
+        }
+
+        _repeatActive = false;
+        _repeatTimer.Stop();
+        _undo.EndBatch();
         UpdateUndoButtons();
     }
 

@@ -156,10 +156,10 @@ public sealed class Viewport3D : Control
 
     private void DrawRoad(Graphics g, RoadPreviewMesh mesh)
     {
-        using Pen edge = new Pen(Color.FromArgb(220, 220, 230), 1.8f);
-        using Pen center = new Pen(Color.FromArgb(120, 220, 120), 1.6f);
-        using Pen rib = new Pen(Color.FromArgb(90, 90, 100), 1f);
-        using Pen wall = new Pen(Color.FromArgb(110, 118, 128), 1.2f);
+        using Pen edge = new Pen(Color.FromArgb(80, 195, 255), 1.8f);   // cyan: road edges
+        using Pen center = new Pen(Color.FromArgb(130, 240, 130), 1.6f); // green: centerline
+        using Pen rib = new Pen(Color.FromArgb(105, 105, 118), 1f);
+        using Pen wall = new Pen(Color.FromArgb(255, 160, 70), 1.2f);    // orange: walls/bottom
 
         bool hasThickness = _doc.Settings.Thickness > 0;
 

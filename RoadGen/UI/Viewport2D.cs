@@ -261,10 +261,10 @@ public sealed class Viewport2D : Control
 
     private void DrawRoad(Graphics g, RoadPreviewMesh mesh)
     {
-        using Pen edge = new Pen(Color.FromArgb(210, 210, 220), 1.6f);
-        using Pen center = new Pen(Color.FromArgb(120, 210, 120), 1.4f);
-        using Pen rib = new Pen(Color.FromArgb(70, 70, 78), 1f);
-        using Pen wall = new Pen(Color.FromArgb(110, 116, 126), 1.2f);
+        using Pen edge = new Pen(Color.FromArgb(80, 190, 255), 2.6f);   // cyan: road edges
+        using Pen center = new Pen(Color.FromArgb(120, 235, 120), 2.4f); // green: centerline
+        using Pen rib = new Pen(Color.FromArgb(85, 85, 95), 2f);
+        using Pen wall = new Pen(Color.FromArgb(255, 160, 70), 2.2f);    // orange: walls/bottom
 
         bool hasThickness = _doc.Settings.Thickness > 0;
 
@@ -278,20 +278,25 @@ public sealed class Viewport2D : Control
             g.DrawLine(rib, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.Right[i]));
         }
 
+        // In the Top view the road is seen from above, so the thickness (walls and
+        // bottom edges) is hidden directly beneath the surface. Drawing them there
+        // would overdraw the cyan edge lines and muddy the colors together.
+        bool showThickness = _plane != PlaneKind.Top;
+
         // Each side's bottom edge is drawn independently so the walls terminate on a
         // visible line without connecting underneath (no fake bottom) unless the bottom
         // face is enabled.
-        if (hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidLeft))
+        if (showThickness && hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidLeft))
         {
             DrawPolyline(g, mesh.BottomLeft, wall);
         }
 
-        if (hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidRight))
+        if (showThickness && hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidRight))
         {
             DrawPolyline(g, mesh.BottomRight, wall);
         }
 
-        if (hasThickness && _doc.Settings.SolidLeft)
+        if (showThickness && hasThickness && _doc.Settings.SolidLeft)
         {
             for (int i = 0; i < mesh.Center.Count; i += 4)
             {
@@ -299,7 +304,7 @@ public sealed class Viewport2D : Control
             }
         }
 
-        if (hasThickness && _doc.Settings.SolidRight)
+        if (showThickness && hasThickness && _doc.Settings.SolidRight)
         {
             for (int i = 0; i < mesh.Center.Count; i += 4)
             {

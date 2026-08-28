@@ -20,6 +20,16 @@ public sealed class UndoManager
         public double TextureScale;
         public double Snap;
         public int LightmapScale;
+        public bool IncUseGridX;
+        public bool IncUseGridY;
+        public bool IncUseGridZ;
+        public bool IncUseGridWidth;
+        public bool IncUseGridBank;
+        public double IncCustomX;
+        public double IncCustomY;
+        public double IncCustomZ;
+        public double IncCustomWidth;
+        public double IncCustomBank;
 
         public static Snapshot Capture(RoadDocument doc)
         {
@@ -34,7 +44,17 @@ public sealed class UndoManager
                 SegmentLength = doc.Settings.SegmentLength,
                 TextureScale = doc.Settings.TextureScale,
                 Snap = doc.Settings.Snap,
-                LightmapScale = doc.Settings.LightmapScale
+                LightmapScale = doc.Settings.LightmapScale,
+                IncUseGridX = doc.Settings.IncUseGridX,
+                IncUseGridY = doc.Settings.IncUseGridY,
+                IncUseGridZ = doc.Settings.IncUseGridZ,
+                IncUseGridWidth = doc.Settings.IncUseGridWidth,
+                IncUseGridBank = doc.Settings.IncUseGridBank,
+                IncCustomX = doc.Settings.IncCustomX,
+                IncCustomY = doc.Settings.IncCustomY,
+                IncCustomZ = doc.Settings.IncCustomZ,
+                IncCustomWidth = doc.Settings.IncCustomWidth,
+                IncCustomBank = doc.Settings.IncCustomBank
             };
 
             foreach (RoadPoint p in doc.Points)
@@ -63,6 +83,16 @@ public sealed class UndoManager
             doc.Settings.TextureScale = TextureScale;
             doc.Settings.Snap = Snap;
             doc.Settings.LightmapScale = LightmapScale;
+            doc.Settings.IncUseGridX = IncUseGridX;
+            doc.Settings.IncUseGridY = IncUseGridY;
+            doc.Settings.IncUseGridZ = IncUseGridZ;
+            doc.Settings.IncUseGridWidth = IncUseGridWidth;
+            doc.Settings.IncUseGridBank = IncUseGridBank;
+            doc.Settings.IncCustomX = IncCustomX;
+            doc.Settings.IncCustomY = IncCustomY;
+            doc.Settings.IncCustomZ = IncCustomZ;
+            doc.Settings.IncCustomWidth = IncCustomWidth;
+            doc.Settings.IncCustomBank = IncCustomBank;
         }
     }
 
@@ -108,24 +138,28 @@ public sealed class UndoManager
 
     public void Undo()
     {
+        // Commit any in-progress edit first (e.g. a still-focused checkbox), so the
+        // most recent change is what actually gets undone.
+        EndBatch();
+
         if (!CanUndo)
         {
             return;
         }
 
-        _batch = null;
         _redo.Push(Snapshot.Capture(_doc));
         _undo.Pop().Restore(_doc);
     }
 
     public void Redo()
     {
+        EndBatch();
+
         if (!CanRedo)
         {
             return;
         }
 
-        _batch = null;
         _undo.Push(Snapshot.Capture(_doc));
         _redo.Pop().Restore(_doc);
     }
