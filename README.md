@@ -3,7 +3,8 @@
 A Windows desktop tool that builds winding 3D roads out of Hammer **displacements**
 and exports them as a Source `.vmf` file.
 
-<img width="2558" height="1391" alt="image" src="https://github.com/user-attachments/assets/a664edd1-2b8d-48b4-a13c-11d98c05e531" />
+<img width="2559" height="1391" alt="image" src="https://github.com/user-attachments/assets/d6ade8e2-2821-476f-b95e-592d97bbd5f5" />
+
 
 ---
 
