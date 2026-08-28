@@ -29,46 +29,87 @@ public static class DisplacementSegment
         // continuous across adjacent segments (no per-segment texture reset).
         textureVAdvance = rowDir.Length;
 
-        // Face normal; make it point downward so the brush body sits below the road.
-        Vec3 down = Vec3.Cross(rowDir, colDir).Normalized();
-        if (Vec3.Dot(down, Vec3.UnitZ) > 0)
-        {
-            down = -down;
-        }
+        // The road body hangs straight down from the surface. Using a fixed
+        // vertical offset (rather than a per-segment surface normal) keeps the
+        // thickness direction identical across segments, so adjacent side walls
+        // and bottoms sew together with no cracks.
+        Vec3 down = new Vec3(0, 0, -1);
 
         Vec3 A2 = A + down * s.Thickness;
         Vec3 B2 = B + down * s.Thickness;
         Vec3 C2 = C + down * s.Thickness;
         Vec3 D2 = D + down * s.Thickness;
 
+        // Precompute the top surface displacement (normals + distances relative to
+        // the flat base parallelogram). These are reused so the side-wall
+        // displacements follow the road's displaced edges.
+        int n = res + 1;
+        Vec3[,] normals = new Vec3[n, n];
+        double[,] distances = new double[n, n];
+        for (int r = 0; r < n; r++)
+        {
+            for (int c = 0; c < n; c++)
+            {
+                Vec3 delta = grid[r, c] - BasePoint(res, r, c, A, rowDir, colDir);
+                double len = delta.Length;
+                normals[r, c] = len < 1e-9 ? Vec3.UnitZ : delta / len;
+                distances[r, c] = len;
+            }
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.Append("\tsolid\r\n\t{\r\n");
         sb.Append("\t\t\"id\" \"").Append(solidId).Append("\"\r\n");
 
-        // Face 1: top face, with the displacement attached. The dispinfo block
-        // must be emitted inside the side block, before its closing brace.
-        // Texture axes: V follows the road, U runs across the width (orthogonal to V).
+        // Face 1: top face with the displacement. V follows the road, U across.
         Vec3 vTop = rowDir.Normalized();
         Vec3 uTop = (colDir - vTop * Vec3.Dot(colDir, vTop)).Normalized();
         double vShift = textureVStart - Vec3.Dot(vTop, A);
         AppendSide(sb, 1, A, B, C, s.Material, uTop, vTop, A, s.TextureScale, s.LightmapScale, leaveOpen: true, vShiftOverride: vShift);
-        AppendDispInfo(sb, grid, res, A, rowDir, colDir, s.Power);
+        AppendDispInfo(sb, res, A, normals, distances, s.Power, Vec3.UnitZ);
         sb.Append("\t\t}\r\n");
 
-        // Face 2: bottom.
-        AppendSide(sb, 2, B2, A2, D2, s.Material, colDir.Normalized(), rowDir.Normalized(), B2, s.TextureScale, s.LightmapScale);
+        // The side walls are displacements too, so their top edges follow the road's
+        // displaced edges. Left/right/bottom are independently optional. The
+        // front/back faces are internal seams and stay nodraw.
+        string bottomMaterial = s.SolidBottom ? s.Material : "TOOLS/TOOLSNODRAW";
+        string leftMaterial = s.SolidLeft ? s.Material : "TOOLS/TOOLSNODRAW";
+        string rightMaterial = s.SolidRight ? s.Material : "TOOLS/TOOLSNODRAW";
 
-        // Face 3: side A-B.
-        AppendSide(sb, 3, A2, B2, B, s.Material, null, null, A2, s.TextureScale, s.LightmapScale);
+        // Face 2: bottom, displaced to mirror the top surface shifted straight down.
+        // Plane points (B2, A2, D2) keep the same winding as the other faces so the
+        // brush stays valid; the displacement itself carries the surface shape.
+        // Texture axes match the top face (U across, V along with continuous V) so
+        // the underside texture stays aligned with the road.
+        double vShiftBottom = textureVStart - Vec3.Dot(vTop, A2);
+        AppendSide(sb, 2, B2, A2, D2, bottomMaterial, uTop, vTop, A2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidBottom, vShiftOverride: vShiftBottom);
+        if (s.SolidBottom)
+        {
+            AppendBottomDispInfo(sb, res, B2, normals, distances, s.Power);
+            sb.Append("\t\t}\r\n");
+        }
 
-        // Face 4: side D-C.
-        AppendSide(sb, 4, C2, D2, D, s.Material, null, null, C2, s.TextureScale, s.LightmapScale);
+        // Face 3: left wall, displaced to follow the road's left edge.
+        AppendSide(sb, 3, A2, B2, B, leftMaterial, null, null, A2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidLeft);
+        if (s.SolidLeft)
+        {
+            AppendEdgeDispInfo(sb, res, A2, normals, distances, leftEdge: true, s.Power);
+            sb.Append("\t\t}\r\n");
+        }
 
-        // Face 5: side B-C.
-        AppendSide(sb, 5, B2, C2, C, s.Material, null, null, B2, s.TextureScale, s.LightmapScale);
+        // Face 4: right wall, displaced to follow the road's right edge.
+        AppendSide(sb, 4, C2, D2, D, rightMaterial, null, null, C2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidRight);
+        if (s.SolidRight)
+        {
+            AppendEdgeDispInfo(sb, res, C2, normals, distances, leftEdge: false, s.Power);
+            sb.Append("\t\t}\r\n");
+        }
 
-        // Face 6: side A-D.
-        AppendSide(sb, 6, D2, A2, A, s.Material, null, null, D2, s.TextureScale, s.LightmapScale);
+        // Face 5: side B-C (front seam, always nodraw).
+        AppendSide(sb, 5, B2, C2, C, "TOOLS/TOOLSNODRAW", null, null, B2, s.TextureScale, s.LightmapScale);
+
+        // Face 6: side A-D (back seam, always nodraw).
+        AppendSide(sb, 6, D2, A2, A, "TOOLS/TOOLSNODRAW", null, null, D2, s.TextureScale, s.LightmapScale);
 
         sb.Append("\t\teditor\r\n\t\t{\r\n");
         sb.Append("\t\t\t\"color\" \"0 173 190\"\r\n");
@@ -121,7 +162,7 @@ public static class DisplacementSegment
         }
     }
 
-    private static void AppendDispInfo(StringBuilder sb, Vec3[,] grid, int res, Vec3 start, Vec3 rowDir, Vec3 colDir, int power)
+    private static void AppendDispInfo(StringBuilder sb, int res, Vec3 start, Vec3[,] normals, double[,] distances, int power, Vec3 offsetNormal)
     {
         int n = res + 1;
 
@@ -139,7 +180,7 @@ public static class DisplacementSegment
             sb.Append("\t\t\t\t\t\"row").Append(row).Append("\" \"");
             for (int col = 0; col < n; col++)
             {
-                Vec3 normal = NormalAt(grid, res, row, col, start, rowDir, colDir);
+                Vec3 normal = normals[row, col];
                 sb.Append(Vmf.Vec(normal));
                 sb.Append(' ');
             }
@@ -157,7 +198,7 @@ public static class DisplacementSegment
             sb.Append("\t\t\t\t\t\"row").Append(row).Append("\" \"");
             for (int col = 0; col < n; col++)
             {
-                double dist = DistanceAt(grid, res, row, col, start, rowDir, colDir);
+                double dist = distances[row, col];
                 sb.Append(Vmf.Num(dist));
                 sb.Append(' ');
             }
@@ -184,14 +225,15 @@ public static class DisplacementSegment
 
         sb.Append("\t\t\t\t}\r\n");
 
-        // offset_normals (kept as unit Z, matching the original Twister output)
-        sb.Append("\t\t\t\toffset_normals\r\n\t\t\t\t{\r\n");
+        // offset_normals (vertex normals used for lighting/smoothing)
+        sb.Append("\t\t\toffset_normals\r\n\t\t\t\t{\r\n");
         for (int row = 0; row < n; row++)
         {
             sb.Append("\t\t\t\t\t\"row").Append(row).Append("\" \"");
             for (int col = 0; col < n; col++)
             {
-                sb.Append("0 0 1 ");
+                sb.Append(Vmf.Vec(offsetNormal));
+                sb.Append(' ');
             }
 
             sb.Length -= 1;
@@ -241,26 +283,53 @@ public static class DisplacementSegment
         sb.Append("\t\t\t}\r\n");
     }
 
+    private static void AppendEdgeDispInfo(StringBuilder sb, int res, Vec3 start, Vec3[,] topNormals, double[,] topDistances, bool leftEdge, int power)
+    {
+        int n = res + 1;
+        Vec3[,] normals = new Vec3[n, n];
+        double[,] distances = new double[n, n];
+
+        for (int r = 0; r < n; r++)
+        {
+            // Wall rows run along the road; the right wall runs in the opposite
+            // road direction, so its rows are reversed.
+            int topRow = leftEdge ? r : res - r;
+            int topCol = leftEdge ? 0 : res;
+            for (int c = 0; c < n; c++)
+            {
+                // Extrude the road edge straight down: every column carries the
+                // full edge displacement, so the wall follows the road's curve
+                // and adjacent segments sew together.
+                normals[r, c] = topNormals[topRow, topCol];
+                distances[r, c] = topDistances[topRow, topCol];
+            }
+        }
+
+        AppendDispInfo(sb, res, start, normals, distances, power, Vec3.UnitZ);
+    }
+
+    private static void AppendBottomDispInfo(StringBuilder sb, int res, Vec3 start, Vec3[,] topNormals, double[,] topDistances, int power)
+    {
+        int n = res + 1;
+        Vec3[,] normals = new Vec3[n, n];
+        double[,] distances = new double[n, n];
+
+        for (int r = 0; r < n; r++)
+        {
+            for (int c = 0; c < n; c++)
+            {
+                // The bottom face runs back-to-front along the road (its rows are
+                // reversed relative to the top), so it mirrors the top surface.
+                normals[r, c] = topNormals[res - r, c];
+                distances[r, c] = topDistances[res - r, c];
+            }
+        }
+
+        AppendDispInfo(sb, res, start, normals, distances, power, new Vec3(0, 0, -1));
+    }
+
     private static Vec3 BasePoint(int res, int row, int col, Vec3 start, Vec3 rowDir, Vec3 colDir)
     {
         return start + rowDir * (row / (double)res) + colDir * (col / (double)res);
-    }
-
-    private static Vec3 NormalAt(Vec3[,] grid, int res, int row, int col, Vec3 start, Vec3 rowDir, Vec3 colDir)
-    {
-        Vec3 delta = grid[row, col] - BasePoint(res, row, col, start, rowDir, colDir);
-        double len = delta.Length;
-        if (len < 1e-9)
-        {
-            return Vec3.UnitZ;
-        }
-
-        return delta / len;
-    }
-
-    private static double DistanceAt(Vec3[,] grid, int res, int row, int col, Vec3 start, Vec3 rowDir, Vec3 colDir)
-    {
-        Vec3 delta = grid[row, col] - BasePoint(res, row, col, start, rowDir, colDir);
-        return delta.Length;
     }
 }

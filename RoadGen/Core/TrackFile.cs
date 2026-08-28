@@ -22,6 +22,9 @@ public static class TrackFile
         public int Power { get; set; }
         public string Material { get; set; } = "CONCRETE/CONCRETEFLOOR005A";
         public double Thickness { get; set; }
+        public bool SolidLeft { get; set; } = true;
+        public bool SolidRight { get; set; } = true;
+        public bool SolidBottom { get; set; } = true;
         public double SegmentLength { get; set; }
         public double TextureScale { get; set; }
         public int LightmapScale { get; set; }
@@ -45,6 +48,9 @@ public static class TrackFile
             Power = doc.Settings.Power,
             Material = doc.Settings.Material,
             Thickness = doc.Settings.Thickness,
+            SolidLeft = doc.Settings.SolidLeft,
+            SolidRight = doc.Settings.SolidRight,
+            SolidBottom = doc.Settings.SolidBottom,
             SegmentLength = doc.Settings.SegmentLength,
             TextureScale = doc.Settings.TextureScale,
             LightmapScale = doc.Settings.LightmapScale,
@@ -81,6 +87,9 @@ public static class TrackFile
                 ? "CONCRETE/CONCRETEFLOOR005A"
                 : data.Settings.Material;
             doc.Settings.Thickness = data.Settings.Thickness;
+            doc.Settings.SolidLeft = data.Settings.SolidLeft;
+            doc.Settings.SolidRight = data.Settings.SolidRight;
+            doc.Settings.SolidBottom = data.Settings.SolidBottom;
             doc.Settings.SegmentLength = data.Settings.SegmentLength;
             doc.Settings.TextureScale = data.Settings.TextureScale;
             doc.Settings.LightmapScale = data.Settings.LightmapScale;

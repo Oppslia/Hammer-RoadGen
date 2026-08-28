@@ -47,8 +47,11 @@ public sealed class RoadPreviewMesh
     public readonly List<Vec3> Center = new List<Vec3>();
     public readonly List<Vec3> Left = new List<Vec3>();
     public readonly List<Vec3> Right = new List<Vec3>();
+    public readonly List<Vec3> BottomCenter = new List<Vec3>();
+    public readonly List<Vec3> BottomLeft = new List<Vec3>();
+    public readonly List<Vec3> BottomRight = new List<Vec3>();
 
-    public static RoadPreviewMesh Build(IReadOnlyList<RoadPoint> pts, int stepsPerSegment)
+    public static RoadPreviewMesh Build(IReadOnlyList<RoadPoint> pts, int stepsPerSegment, double thickness)
     {
         var mesh = new RoadPreviewMesh();
         if (pts.Count < 2)
@@ -73,10 +76,16 @@ public sealed class RoadPreviewMesh
             double bank = RoadCurve.Bank(pts, t) * Math.PI / 180.0;
             RoadFrame frame = walker.Step(pos, tan, bank);
 
-            mesh.Center.Add(pos);
+            // Match the export: the road body hangs straight down (world -Z).
+            Vec3 down = new Vec3(0, 0, -1) * thickness;
             double half = width / 2.0;
+
+            mesh.Center.Add(pos);
             mesh.Left.Add(pos - frame.B * half);
             mesh.Right.Add(pos + frame.B * half);
+            mesh.BottomCenter.Add(pos + down);
+            mesh.BottomLeft.Add(pos - frame.B * half + down);
+            mesh.BottomRight.Add(pos + frame.B * half + down);
         }
 
         return mesh;

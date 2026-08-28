@@ -32,6 +32,15 @@ public sealed class RoadSettings
     /// <summary>Brush depth below the road surface, in units.</summary>
     public double Thickness = 64;
 
+    /// <summary>Draw/export the left side wall.</summary>
+    public bool SolidLeft = true;
+
+    /// <summary>Draw/export the right side wall.</summary>
+    public bool SolidRight = true;
+
+    /// <summary>Draw/export the bottom face.</summary>
+    public bool SolidBottom = true;
+
     /// <summary>Target length of each generated displacement segment. Smaller = smoother,
     /// larger = fewer displacements.</summary>
     public double SegmentLength = 256;

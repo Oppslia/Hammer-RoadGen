@@ -137,7 +137,7 @@ public sealed class Viewport2D : Control
             return;
         }
 
-        RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 24);
+        RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 24, _doc.Settings.Thickness);
         DrawRoad(g, mesh);
         DrawPoints(g);
         DrawHint(g);
@@ -261,6 +261,9 @@ public sealed class Viewport2D : Control
         using Pen edge = new Pen(Color.FromArgb(210, 210, 220), 1.6f);
         using Pen center = new Pen(Color.FromArgb(120, 210, 120), 1.4f);
         using Pen rib = new Pen(Color.FromArgb(70, 70, 78), 1f);
+        using Pen wall = new Pen(Color.FromArgb(110, 116, 126), 1.2f);
+
+        bool hasThickness = _doc.Settings.Thickness > 0;
 
         DrawPolyline(g, mesh.Left, edge);
         DrawPolyline(g, mesh.Right, edge);
@@ -270,6 +273,35 @@ public sealed class Viewport2D : Control
         for (int i = 0; i < mesh.Center.Count; i += 4)
         {
             g.DrawLine(rib, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.Right[i]));
+        }
+
+        // Each side's bottom edge is drawn independently so the walls terminate on a
+        // visible line without connecting underneath (no fake bottom) unless the bottom
+        // face is enabled.
+        if (hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidLeft))
+        {
+            DrawPolyline(g, mesh.BottomLeft, wall);
+        }
+
+        if (hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidRight))
+        {
+            DrawPolyline(g, mesh.BottomRight, wall);
+        }
+
+        if (hasThickness && _doc.Settings.SolidLeft)
+        {
+            for (int i = 0; i < mesh.Center.Count; i += 4)
+            {
+                g.DrawLine(wall, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.BottomLeft[i]));
+            }
+        }
+
+        if (hasThickness && _doc.Settings.SolidRight)
+        {
+            for (int i = 0; i < mesh.Center.Count; i += 4)
+            {
+                g.DrawLine(wall, WorldToScreenF(mesh.Right[i]), WorldToScreenF(mesh.BottomRight[i]));
+            }
         }
     }
 

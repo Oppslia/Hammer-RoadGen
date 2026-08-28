@@ -34,6 +34,9 @@ public sealed class MainForm : Form
     private readonly NumericUpDown _numSnap = new NumericUpDown();
     private readonly ComboBox _cboPower = new ComboBox();
     private readonly TextBox _txtMaterial = new TextBox();
+    private readonly CheckBox _chkSolidLeft = new CheckBox();
+    private readonly CheckBox _chkSolidRight = new CheckBox();
+    private readonly CheckBox _chkSolidBottom = new CheckBox();
 
     private int _selectedIndex = -1;
     private bool _loading;
@@ -230,20 +233,21 @@ public sealed class MainForm : Form
         {
             Text = "Road Settings",
             Dock = DockStyle.Top,
-            Height = 240,
+            Height = 275,
             Padding = new Padding(6)
         };
 
         var table = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
+            Height = 189,
             ColumnCount = 2,
-            RowCount = 8,
+            RowCount = 7,
             Padding = new Padding(0)
         };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int r = 0; r < 8; r++)
+        for (int r = 0; r < 7; r++)
         {
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
         }
@@ -262,6 +266,32 @@ public sealed class MainForm : Form
         AddSettingRow(table, 5, "Lightmap scale", _numLightmap);
         AddSettingRow(table, 6, "Grid snap (0=off)", _numSnap);
 
+        var solidRoadsGroup = new GroupBox
+        {
+            Text = "Solid Roads",
+            Dock = DockStyle.Fill,
+            Padding = new Padding(6)
+        };
+
+        var solidFlow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false
+        };
+
+        _chkSolidLeft.Text = "Left side";
+        _chkSolidLeft.AutoSize = true;
+        _chkSolidRight.Text = "Right side";
+        _chkSolidRight.AutoSize = true;
+        _chkSolidBottom.Text = "Bottom";
+        _chkSolidBottom.AutoSize = true;
+        solidFlow.Controls.Add(_chkSolidLeft);
+        solidFlow.Controls.Add(_chkSolidRight);
+        solidFlow.Controls.Add(_chkSolidBottom);
+        solidRoadsGroup.Controls.Add(solidFlow);
+
+        settingsGroup.Controls.Add(solidRoadsGroup);
         settingsGroup.Controls.Add(table);
 
         var generate = new Button
@@ -413,6 +443,9 @@ public sealed class MainForm : Form
         _numTexScale.ValueChanged += (s, e) => ApplySettingsFromControls();
         _numLightmap.ValueChanged += (s, e) => ApplySettingsFromControls();
         _numSnap.ValueChanged += (s, e) => ApplySettingsFromControls();
+        _chkSolidLeft.CheckedChanged += (s, e) => ApplySettingsFromControls();
+        _chkSolidRight.CheckedChanged += (s, e) => ApplySettingsFromControls();
+        _chkSolidBottom.CheckedChanged += (s, e) => ApplySettingsFromControls();
 
         AttachUndoBatch(_numX);
         AttachUndoBatch(_numY);
@@ -424,6 +457,9 @@ public sealed class MainForm : Form
         AttachUndoBatch(_numTexScale);
         AttachUndoBatch(_numLightmap);
         AttachUndoBatch(_numSnap);
+        AttachUndoBatch(_chkSolidLeft);
+        AttachUndoBatch(_chkSolidRight);
+        AttachUndoBatch(_chkSolidBottom);
         AttachUndoBatch(_cboPower);
         AttachUndoBatch(_txtMaterial);
     }
@@ -974,6 +1010,9 @@ public sealed class MainForm : Form
         s.TextureScale = (double)_numTexScale.Value;
         s.LightmapScale = (int)_numLightmap.Value;
         s.Snap = (double)_numSnap.Value;
+        s.SolidLeft = _chkSolidLeft.Checked;
+        s.SolidRight = _chkSolidRight.Checked;
+        s.SolidBottom = _chkSolidBottom.Checked;
         _doc.NotifyChanged();
     }
 
@@ -1005,6 +1044,9 @@ public sealed class MainForm : Form
         _numTexScale.Value = (decimal)s.TextureScale;
         _numLightmap.Value = (decimal)s.LightmapScale;
         _numSnap.Value = (decimal)s.Snap;
+        _chkSolidLeft.Checked = s.SolidLeft;
+        _chkSolidRight.Checked = s.SolidRight;
+        _chkSolidBottom.Checked = s.SolidBottom;
         _loading = false;
     }
 

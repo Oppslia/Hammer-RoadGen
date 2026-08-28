@@ -81,7 +81,7 @@ public sealed class Viewport3D : Control
 
         if (_doc != null)
         {
-            RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 20);
+            RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 20, _doc.Settings.Thickness);
             DrawRoad(g, mesh);
             DrawPoints(g);
         }
@@ -156,6 +156,9 @@ public sealed class Viewport3D : Control
         using Pen edge = new Pen(Color.FromArgb(220, 220, 230), 1.8f);
         using Pen center = new Pen(Color.FromArgb(120, 220, 120), 1.6f);
         using Pen rib = new Pen(Color.FromArgb(90, 90, 100), 1f);
+        using Pen wall = new Pen(Color.FromArgb(110, 118, 128), 1.2f);
+
+        bool hasThickness = _doc.Settings.Thickness > 0;
 
         DrawPolyline(g, mesh.Left, edge);
         DrawPolyline(g, mesh.Right, edge);
@@ -164,6 +167,43 @@ public sealed class Viewport3D : Control
         for (int i = 0; i < mesh.Center.Count; i += 5)
         {
             Draw3DLine(g, mesh.Left[i], mesh.Right[i], rib);
+        }
+
+        // Each side's bottom edge is drawn independently so the walls terminate on a
+        // visible line. The connecting ribs underneath are only drawn when the bottom
+        // face is enabled, so an unchecked bottom does not look closed.
+        if (hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidLeft))
+        {
+            DrawPolyline(g, mesh.BottomLeft, wall);
+        }
+
+        if (hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidRight))
+        {
+            DrawPolyline(g, mesh.BottomRight, wall);
+        }
+
+        if (hasThickness && _doc.Settings.SolidBottom)
+        {
+            for (int i = 0; i < mesh.Center.Count; i += 5)
+            {
+                Draw3DLine(g, mesh.BottomLeft[i], mesh.BottomRight[i], rib);
+            }
+        }
+
+        if (hasThickness && _doc.Settings.SolidLeft)
+        {
+            for (int i = 0; i < mesh.Center.Count; i += 5)
+            {
+                Draw3DLine(g, mesh.Left[i], mesh.BottomLeft[i], wall);
+            }
+        }
+
+        if (hasThickness && _doc.Settings.SolidRight)
+        {
+            for (int i = 0; i < mesh.Center.Count; i += 5)
+            {
+                Draw3DLine(g, mesh.Right[i], mesh.BottomRight[i], wall);
+            }
         }
     }
 

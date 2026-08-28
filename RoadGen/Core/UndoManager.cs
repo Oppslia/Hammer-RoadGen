@@ -13,6 +13,9 @@ public sealed class UndoManager
         public int Power;
         public string Material = string.Empty;
         public double Thickness;
+        public bool SolidLeft;
+        public bool SolidRight;
+        public bool SolidBottom;
         public double SegmentLength;
         public double TextureScale;
         public double Snap;
@@ -25,6 +28,9 @@ public sealed class UndoManager
                 Power = doc.Settings.Power,
                 Material = doc.Settings.Material,
                 Thickness = doc.Settings.Thickness,
+                SolidLeft = doc.Settings.SolidLeft,
+                SolidRight = doc.Settings.SolidRight,
+                SolidBottom = doc.Settings.SolidBottom,
                 SegmentLength = doc.Settings.SegmentLength,
                 TextureScale = doc.Settings.TextureScale,
                 Snap = doc.Settings.Snap,
@@ -50,6 +56,9 @@ public sealed class UndoManager
             doc.Settings.Power = Power;
             doc.Settings.Material = Material;
             doc.Settings.Thickness = Thickness;
+            doc.Settings.SolidLeft = SolidLeft;
+            doc.Settings.SolidRight = SolidRight;
+            doc.Settings.SolidBottom = SolidBottom;
             doc.Settings.SegmentLength = SegmentLength;
             doc.Settings.TextureScale = TextureScale;
             doc.Settings.Snap = Snap;
