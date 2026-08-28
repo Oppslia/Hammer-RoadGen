@@ -982,6 +982,13 @@ public sealed class MainForm : Form
 
     private void RemovePoint()
     {
+        // Stop any in-progress point drag first, so its stale indices don't keep
+        // mutating the wrong points after the list shifts on removal.
+        _v3d.CancelDrag();
+        _top.CancelDrag();
+        _front.CancelDrag();
+        _side.CancelDrag();
+
         // Deletes every selected point. Falls back to the single tracked
         // selection when the ListView has no selection (e.g. Delete key).
         var selected = new List<int>();
@@ -1729,7 +1736,7 @@ public sealed class MainForm : Form
 
         // Set the distance first (validated against the current width), then the
         // min sizes (validated against the distance), then re-clamp the distance.
-        int distance = Math.Max(50, width - 360);
+        int distance = Math.Max(50, width - 380);
         _split.SplitterDistance = distance;
         _split.Panel1MinSize = Math.Min(380, _split.SplitterDistance);
         _split.Panel2MinSize = Math.Min(280, width - _split.SplitterDistance);

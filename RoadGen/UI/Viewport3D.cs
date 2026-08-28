@@ -49,6 +49,16 @@ public sealed class Viewport3D : Control
 
     public bool ShowSegments;
 
+    /// <summary>Cancel any in-progress orbit/pan/click. The 3D view has no point
+    /// drag, but this keeps the API consistent when points are deleted.</summary>
+    public void CancelDrag()
+    {
+        _orbiting = false;
+        _panning = false;
+        _clickCandidate = false;
+        Cursor = Cursors.Default;
+    }
+
     public void FrameAll()
     {
         _autoTarget = true;
@@ -220,7 +230,7 @@ public sealed class Viewport3D : Control
         var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings);
         double thickness = _doc.Settings.Thickness;
         Vec3 down = new Vec3(0, 0, -1) * thickness;
-        using Pen pen = new Pen(Color.FromArgb(255, 190, 70), 1.2f);
+        using Pen pen = new Pen(Color.FromArgb(255, 100, 220), 1.2f);
         foreach (SegmentLayout.Segment seg in segments)
         {
             Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
@@ -320,6 +330,8 @@ public sealed class Viewport3D : Control
         {
             _clickCandidate = true;
             _downPos = e.Location;
+            TryPick(e.Location, out int idx);
+            PointSelected?.Invoke(idx, (ModifierKeys & Keys.Control) != 0);
         }
         else if (e.Button == MouseButtons.Right)
         {
@@ -383,12 +395,6 @@ public sealed class Viewport3D : Control
         }
         else if (e.Button == MouseButtons.Left)
         {
-            if (_clickCandidate)
-            {
-                TryPick(e.Location, out int idx);
-                PointSelected?.Invoke(idx, (ModifierKeys & Keys.Control) != 0);
-            }
-
             _clickCandidate = false;
         }
     }

@@ -24,6 +24,15 @@ public sealed class Viewport2D : Control
     private double _zoom = 0.45;
     private bool _pendingFrame = true;
 
+    // Cached bitmap of the grid + axes. These depend only on the view transform
+    // and snap, not on the road, so they are re-rendered only when the view
+    // changes and blitted on every frame (point dragging gets much faster).
+    private Bitmap _gridCache;
+    private double _gridCacheCenterX;
+    private double _gridCacheCenterY;
+    private double _gridCacheZoom;
+    private double _gridCacheSnap;
+
     private bool _panning;
     private Point _panStartScreen;
     private Vec3 _panStartCenter;
@@ -34,6 +43,11 @@ public sealed class Viewport2D : Control
     private Vec3 _dragOrigin;
     private List<int> _moveIndices;
     private List<Vec3> _moveOrigins;
+
+    // Captured on mouse-down so a drag keeps the existing selection intact while
+    // a plain click can still collapse to a single point on release.
+    private bool _wasSelectedOnDown;
+    private bool _ctrlOnDown;
 
     private bool _boxPending;
     private bool _boxSelecting;
@@ -70,6 +84,24 @@ public sealed class Viewport2D : Control
     {
         _plane = plane;
         Invalidate();
+    }
+
+    /// <summary>Cancel any in-progress point drag/pan/box selection. Called when a
+    /// point is deleted mid-drag so the drag's stale indices don't keep moving the
+    /// wrong points after the list shifts.</summary>
+    public void CancelDrag()
+    {
+        if (_dragging)
+        {
+            EditEnd?.Invoke();
+        }
+
+        _dragIndex = -1;
+        _dragging = false;
+        _boxPending = false;
+        _boxSelecting = false;
+        _panning = false;
+        Cursor = Cursors.Default;
     }
 
     public void FrameAll()
@@ -121,7 +153,6 @@ public sealed class Viewport2D : Control
         base.OnPaint(e);
         Graphics g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.Clear(BackColor);
 
         if (_pendingFrame && Width > 0 && Height > 0)
         {
@@ -129,8 +160,7 @@ public sealed class Viewport2D : Control
             _pendingFrame = false;
         }
 
-        DrawGrid(g);
-        DrawAxis(g);
+        DrawGridAndAxes(g);
 
         if (_doc == null)
         {
@@ -147,6 +177,44 @@ public sealed class Viewport2D : Control
         DrawBox(g);
         DrawTitle(g);
         DrawBorder(g);
+    }
+
+    private void DrawGridAndAxes(Graphics g)
+    {
+        double snap = _doc != null && _doc.Settings.Snap > 0 ? _doc.Settings.Snap : 64;
+        if (snap <= 0)
+        {
+            snap = 64;
+        }
+
+        // Regenerate the cached grid only when the view transform, size or snap
+        // changed. During point dragging none of these change, so each frame just
+        // blits the cached bitmap instead of drawing hundreds of AA lines.
+        if (_gridCache == null
+            || _gridCache.Width != Width
+            || _gridCache.Height != Height
+            || _gridCacheCenterX != _center.X
+            || _gridCacheCenterY != _center.Y
+            || _gridCacheZoom != _zoom
+            || _gridCacheSnap != snap)
+        {
+            _gridCache?.Dispose();
+            _gridCache = new Bitmap(Math.Max(1, Width), Math.Max(1, Height));
+            using (Graphics bg = Graphics.FromImage(_gridCache))
+            {
+                bg.SmoothingMode = SmoothingMode.AntiAlias;
+                bg.Clear(BackColor);
+                DrawGrid(bg);
+                DrawAxis(bg);
+            }
+
+            _gridCacheCenterX = _center.X;
+            _gridCacheCenterY = _center.Y;
+            _gridCacheZoom = _zoom;
+            _gridCacheSnap = snap;
+        }
+
+        g.DrawImage(_gridCache, 0, 0, Width, Height);
     }
 
     private void DrawGrid(Graphics g)
@@ -323,7 +391,7 @@ public sealed class Viewport2D : Control
         var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings);
         double thickness = _doc.Settings.Thickness;
         Vec3 down = new Vec3(0, 0, -1) * thickness;
-        using Pen pen = new Pen(Color.FromArgb(255, 190, 70), 1.1f);
+        using Pen pen = new Pen(Color.FromArgb(255, 100, 220), 1.1f);
         foreach (SegmentLayout.Segment seg in segments)
         {
             Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
@@ -524,6 +592,21 @@ public sealed class Viewport2D : Control
         _dragOrigin = _doc.Points[_dragIndex].Position;
     }
 
+    private bool IsPointSelected(int index)
+    {
+        var selected = GetSelectedIndices();
+        foreach (int i in selected)
+        {
+            if (i == index)
+            {
+                return true;
+            }
+        }
+
+        // Mirror DrawPoints: fall back to the single tracked selection.
+        return selected.Count == 0 && GetSelectedIndex() == index;
+    }
+
     // ----- mouse interaction -----
 
     protected override void OnMouseDown(MouseEventArgs e)
@@ -555,6 +638,17 @@ public sealed class Viewport2D : Control
             _dragIndex = idx;
             _dragStartScreen = e.Location;
             _dragging = false;
+
+            _wasSelectedOnDown = IsPointSelected(idx);
+            _ctrlOnDown = (ModifierKeys & Keys.Control) != 0;
+
+            // Give immediate feedback: select (or ctrl-toggle) right on press. If
+            // the point was already selected we leave the selection alone so a
+            // drag moves the whole group; click-to-collapse happens on release.
+            if (_ctrlOnDown || !_wasSelectedOnDown)
+            {
+                PointSelected?.Invoke(idx, _ctrlOnDown);
+            }
         }
         else
         {
@@ -647,9 +741,11 @@ public sealed class Viewport2D : Control
             {
                 EditEnd?.Invoke();
             }
-            else
+            else if (!_ctrlOnDown && _wasSelectedOnDown)
             {
-                PointSelected?.Invoke(_dragIndex, (ModifierKeys & Keys.Control) != 0);
+                // Plain click on an already-selected point: collapse to a single
+                // selection (it wasn't changed on mouse-down).
+                PointSelected?.Invoke(_dragIndex, false);
             }
 
             _dragIndex = -1;
