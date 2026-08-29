@@ -6,11 +6,11 @@ namespace RoadGen.Core;
 /// <summary>Builds plain solid brushes (one tetrahedron per triangle) from a sampled
 /// surface grid. This is the "brush" export mode: instead of displacement surfaces,
 /// the road is tessellated into convex 4-sided solids extruded along the surface
-/// normal by Settings.Thickness.</summary>
+/// normal by the supplied thickness.</summary>
 [Obsolete("Experimental brush export. Disabled by default; uncomment the UI wiring to use it.")]
 public static class BrushSegment
 {
-    public static string Build(Vec3[,] grid, RoadSettings s, ref int solidId)
+    public static string Build(Vec3[,] grid, double thickness, RoadSettings s, ref int solidId)
     {
         int res = grid.GetLength(0) - 1;
         StringBuilder sb = new StringBuilder();
@@ -20,15 +20,15 @@ public static class BrushSegment
             for (int col = 0; col < res; col++)
             {
                 // Two triangles per grid cell, wound consistently.
-                AppendTriangle(sb, solidId++, grid[row, col], grid[row + 1, col], grid[row + 1, col + 1], s);
-                AppendTriangle(sb, solidId++, grid[row, col], grid[row + 1, col + 1], grid[row, col + 1], s);
+                AppendTriangle(sb, solidId++, grid[row, col], grid[row + 1, col], grid[row + 1, col + 1], s, thickness);
+                AppendTriangle(sb, solidId++, grid[row, col], grid[row + 1, col + 1], grid[row, col + 1], s, thickness);
             }
         }
 
         return sb.ToString();
     }
 
-    private static void AppendTriangle(StringBuilder sb, int solidId, Vec3 a, Vec3 b, Vec3 c, RoadSettings s)
+    private static void AppendTriangle(StringBuilder sb, int solidId, Vec3 a, Vec3 b, Vec3 c, RoadSettings s, double thickness)
     {
         Vec3 normal = Vec3.Cross(b - a, c - a);
         if (normal.LengthSq < 1e-12)
@@ -44,7 +44,7 @@ public static class BrushSegment
             normal = -normal;
         }
 
-        double depth = Math.Max(1.0, s.Thickness);
+        double depth = Math.Max(1.0, thickness);
         Vec3 apex = (a + b + c) / 3.0 + normal * depth;
 
         Vec3 A = a.Rounded(6);

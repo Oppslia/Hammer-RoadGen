@@ -72,19 +72,35 @@ public sealed class Viewport3D : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(BackColor);
 
-        if (_autoTarget && _doc != null && _doc.Points.Count > 0)
+        if (_autoTarget && _doc != null)
         {
-            Vec3 min = _doc.Points[0].Position;
-            Vec3 max = _doc.Points[0].Position;
-            foreach (RoadPoint p in _doc.Points)
+            bool foundAny = false;
+            Vec3 min = Vec3.Zero;
+            Vec3 max = Vec3.Zero;
+            foreach (Track track in _doc.Tracks)
             {
-                min = Vec3.Min(min, p.Position);
-                max = Vec3.Max(max, p.Position);
+                foreach (RoadPoint p in track.Points)
+                {
+                    if (!foundAny)
+                    {
+                        min = p.Position;
+                        max = p.Position;
+                        foundAny = true;
+                    }
+                    else
+                    {
+                        min = Vec3.Min(min, p.Position);
+                        max = Vec3.Max(max, p.Position);
+                    }
+                }
             }
 
-            _target = (min + max) / 2.0;
-            double span = Math.Max(256, Math.Max(max.X - min.X, Math.Max(max.Y - min.Y, max.Z - min.Z)));
-            _dist = span * 3.2;
+            if (foundAny)
+            {
+                _target = (min + max) / 2.0;
+                double span = Math.Max(256, Math.Max(max.X - min.X, Math.Max(max.Y - min.Y, max.Z - min.Z)));
+                _dist = span * 3.2;
+            }
         }
 
         SetupCamera();
@@ -93,9 +109,9 @@ public sealed class Viewport3D : Control
 
         if (_doc != null)
         {
-            RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 20, _doc.Settings.Thickness);
-            DrawRoad(g, mesh);
+            DrawAllTracks(g);
             DrawSegments(g);
+            DrawInactivePoints(g);
             DrawPoints(g);
         }
 
@@ -164,61 +180,148 @@ public sealed class Viewport3D : Control
         Draw3DLine(g, Vec3.Zero, new Vec3(0, 0, 512), zp);
     }
 
-    private void DrawRoad(Graphics g, RoadPreviewMesh mesh)
+    private void DrawAllTracks(Graphics g)
     {
-        using Pen edge = new Pen(Color.FromArgb(80, 195, 255), 1.8f);   // cyan: road edges
-        using Pen center = new Pen(Color.FromArgb(130, 240, 130), 1.6f); // green: centerline
-        using Pen rib = new Pen(Color.FromArgb(105, 105, 118), 1f);
-        using Pen wall = new Pen(Color.FromArgb(255, 160, 70), 1.2f);    // orange: walls/bottom
+        Track activeTrack = _doc.ActiveTrack;
+        const int stepsPerSegment = 20;
 
-        bool hasThickness = _doc.Settings.Thickness > 0;
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
 
-        DrawPolyline(g, mesh.Left, edge);
-        DrawPolyline(g, mesh.Right, edge);
-        DrawPolyline(g, mesh.Center, center);
+            RoadPreviewMesh mesh = RoadPreviewMesh.Build(chain.Points, stepsPerSegment);
+
+            foreach (ChainSpan span in chain.Spans)
+            {
+                if (span.EndPoint - span.StartPoint < 2)
+                {
+                    continue;
+                }
+
+                bool isActive = ReferenceEquals(span.Track, activeTrack);
+                int startIndex = span.StartPoint * stepsPerSegment;
+                int endIndex = (span.EndPoint - 1) * stepsPerSegment;
+                DrawMeshRange(g, mesh, span.Track.Settings, isActive, startIndex, endIndex);
+            }
+        }
+    }
+
+    private void DrawMeshRange(Graphics g, RoadPreviewMesh mesh, RoadSettings settings, bool isActive, int startIndex, int endIndex)
+    {
+        if (startIndex < 0)
+        {
+            startIndex = 0;
+        }
+
+        if (endIndex > mesh.Center.Count - 1)
+        {
+            endIndex = mesh.Center.Count - 1;
+        }
+
+        if (startIndex > endIndex)
+        {
+            return;
+        }
+
+        using Pen edge = new Pen(isActive ? Color.FromArgb(80, 195, 255) : Color.FromArgb(105, 115, 130), isActive ? 1.8f : 1.1f);
+        using Pen center = new Pen(isActive ? Color.FromArgb(130, 240, 130) : Color.FromArgb(95, 105, 120), isActive ? 1.6f : 1.0f);
+        using Pen rib = new Pen(isActive ? Color.FromArgb(105, 105, 118) : Color.FromArgb(58, 60, 68), 1f);
+        using Pen wall = new Pen(isActive ? Color.FromArgb(255, 160, 70) : Color.FromArgb(80, 85, 98), 1.2f);
+
+        DrawPolylineRange(g, mesh.Left, edge, startIndex, endIndex);
+        DrawPolylineRange(g, mesh.Right, edge, startIndex, endIndex);
+        DrawPolylineRange(g, mesh.Center, center, startIndex, endIndex);
 
         if (!ShowSegments)
         {
-            for (int i = 0; i < mesh.Center.Count; i += 5)
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                Draw3DLine(g, mesh.Left[i], mesh.Right[i], rib);
+                if (i % 5 == 0)
+                {
+                    Draw3DLine(g, mesh.Left[i], mesh.Right[i], rib);
+                }
             }
         }
 
-        // Each side's bottom edge is drawn independently so the walls terminate on a
-        // visible line. The connecting ribs underneath are only drawn when the bottom
-        // face is enabled, so an unchecked bottom does not look closed.
-        if (hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidLeft))
+        if (settings.SolidBottom || settings.SolidLeft)
         {
-            DrawPolyline(g, mesh.BottomLeft, wall);
+            DrawPolylineRange(g, mesh.BottomLeft, wall, startIndex, endIndex);
         }
 
-        if (hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidRight))
+        if (settings.SolidBottom || settings.SolidRight)
         {
-            DrawPolyline(g, mesh.BottomRight, wall);
+            DrawPolylineRange(g, mesh.BottomRight, wall, startIndex, endIndex);
         }
 
-        if (!ShowSegments && hasThickness && _doc.Settings.SolidBottom)
+        if (!ShowSegments && settings.SolidBottom)
         {
-            for (int i = 0; i < mesh.Center.Count; i += 5)
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                Draw3DLine(g, mesh.BottomLeft[i], mesh.BottomRight[i], rib);
+                if (i % 5 == 0)
+                {
+                    Draw3DLine(g, mesh.BottomLeft[i], mesh.BottomRight[i], rib);
+                }
             }
         }
 
-        if (hasThickness && _doc.Settings.SolidLeft)
+        if (settings.SolidLeft)
         {
-            for (int i = 0; i < mesh.Center.Count; i += 5)
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                Draw3DLine(g, mesh.Left[i], mesh.BottomLeft[i], wall);
+                if (i % 5 == 0)
+                {
+                    Draw3DLine(g, mesh.Left[i], mesh.BottomLeft[i], wall);
+                }
             }
         }
 
-        if (hasThickness && _doc.Settings.SolidRight)
+        if (settings.SolidRight)
         {
-            for (int i = 0; i < mesh.Center.Count; i += 5)
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                Draw3DLine(g, mesh.Right[i], mesh.BottomRight[i], wall);
+                if (i % 5 == 0)
+                {
+                    Draw3DLine(g, mesh.Right[i], mesh.BottomRight[i], wall);
+                }
+            }
+        }
+    }
+
+    private void DrawPolylineRange(Graphics g, IReadOnlyList<Vec3> points, Pen pen, int startIndex, int endIndex)
+    {
+        for (int index = startIndex; index < endIndex; index++)
+        {
+            Draw3DLine(g, points[index], points[index + 1], pen);
+        }
+    }
+
+    private void DrawInactivePoints(Graphics g)
+    {
+        if (_doc == null)
+        {
+            return;
+        }
+
+        Track activeTrack = _doc.ActiveTrack;
+        using Brush fill = new SolidBrush(Color.FromArgb(110, 115, 125));
+
+        foreach (Track track in _doc.Tracks)
+        {
+            if (ReferenceEquals(track, activeTrack))
+            {
+                continue;
+            }
+
+            foreach (RoadPoint point in track.Points)
+            {
+                PointF? s = Project(point.Position);
+                if (s != null)
+                {
+                    g.FillEllipse(fill, s.Value.X - 3, s.Value.Y - 3, 6, 6);
+                }
             }
         }
     }
@@ -231,13 +334,13 @@ public sealed class Viewport3D : Control
         }
 
         var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings);
-        double thickness = _doc.Settings.Thickness;
-        Vec3 down = new Vec3(0, 0, -1) * thickness;
         using Pen pen = new Pen(Color.FromArgb(255, 100, 220), 1.2f);
         foreach (SegmentLayout.Segment seg in segments)
         {
             Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
-            Vec3 a2 = a + down, b2 = b + down, c2 = c + down, d2 = d + down;
+            Vec3 downStart = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T0);
+            Vec3 downEnd = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T1);
+            Vec3 a2 = a + downStart, b2 = b + downEnd, c2 = c + downEnd, d2 = a2 + c2 - b2;
 
             // Top face: the base parallelogram Hammer reconstructs.
             Draw3DLine(g, a, b, pen);
@@ -245,18 +348,15 @@ public sealed class Viewport3D : Control
             Draw3DLine(g, c, d, pen);
             Draw3DLine(g, d, a, pen);
 
-            if (thickness > 0)
-            {
-                Draw3DLine(g, a2, b2, pen);
-                Draw3DLine(g, b2, c2, pen);
-                Draw3DLine(g, c2, d2, pen);
-                Draw3DLine(g, d2, a2, pen);
+            Draw3DLine(g, a2, b2, pen);
+            Draw3DLine(g, b2, c2, pen);
+            Draw3DLine(g, c2, d2, pen);
+            Draw3DLine(g, d2, a2, pen);
 
-                Draw3DLine(g, a, a2, pen);
-                Draw3DLine(g, b, b2, pen);
-                Draw3DLine(g, c, c2, pen);
-                Draw3DLine(g, d, d2, pen);
-            }
+            Draw3DLine(g, a, a2, pen);
+            Draw3DLine(g, b, b2, pen);
+            Draw3DLine(g, c, c2, pen);
+            Draw3DLine(g, d, d2, pen);
         }
     }
 
@@ -301,14 +401,6 @@ public sealed class Viewport3D : Control
     {
         using Pen p = new Pen(Color.FromArgb(100, 108, 120));
         g.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
-    }
-
-    private void DrawPolyline(Graphics g, IReadOnlyList<Vec3> pts, Pen pen)
-    {
-        for (int i = 0; i < pts.Count - 1; i++)
-        {
-            Draw3DLine(g, pts[i], pts[i + 1], pen);
-        }
     }
 
     private void Draw3DLine(Graphics g, Vec3 a, Vec3 b, Pen pen)

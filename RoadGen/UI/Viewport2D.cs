@@ -113,17 +113,35 @@ public sealed class Viewport2D : Control
 
     private void ApplyFrame()
     {
-        if (_doc == null || _doc.Points.Count == 0)
+        if (_doc == null)
         {
             return;
         }
 
-        Vec3 min = _doc.Points[0].Position;
-        Vec3 max = _doc.Points[0].Position;
-        foreach (RoadPoint p in _doc.Points)
+        bool foundAny = false;
+        Vec3 min = Vec3.Zero;
+        Vec3 max = Vec3.Zero;
+        foreach (Track track in _doc.Tracks)
         {
-            min = Vec3.Min(min, p.Position);
-            max = Vec3.Max(max, p.Position);
+            foreach (RoadPoint p in track.Points)
+            {
+                if (!foundAny)
+                {
+                    min = p.Position;
+                    max = p.Position;
+                    foundAny = true;
+                }
+                else
+                {
+                    min = Vec3.Min(min, p.Position);
+                    max = Vec3.Max(max, p.Position);
+                }
+            }
+        }
+
+        if (!foundAny)
+        {
+            return;
         }
 
         Vec3 mid = (min + max) / 2.0;
@@ -169,9 +187,9 @@ public sealed class Viewport2D : Control
             return;
         }
 
-        RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 24, _doc.Settings.Thickness);
-        DrawRoad(g, mesh);
+        DrawAllTracks(g);
         DrawSegments(g);
+        DrawInactivePoints(g);
         DrawPoints(g);
         DrawHint(g);
         DrawBox(g);
@@ -327,70 +345,158 @@ public sealed class Viewport2D : Control
         _ => new Vec3(o, h, v)
     };
 
-    private void DrawRoad(Graphics g, RoadPreviewMesh mesh)
+    private void DrawAllTracks(Graphics g)
     {
-        using Pen edge = new Pen(Color.FromArgb(80, 190, 255), 2.6f);   // cyan: road edges
-        using Pen center = new Pen(Color.FromArgb(120, 235, 120), 2.4f); // green: centerline
-        using Pen rib = new Pen(Color.FromArgb(85, 85, 95), 2f);
-        using Pen wall = new Pen(Color.FromArgb(255, 160, 70), 2.2f);    // orange: walls/bottom
+        Track activeTrack = _doc.ActiveTrack;
+        const int stepsPerSegment = 24;
 
-        bool hasThickness = _doc.Settings.Thickness > 0;
-
-        DrawPolyline(g, mesh.Left, edge);
-        DrawPolyline(g, mesh.Right, edge);
-        DrawPolyline(g, mesh.Center, center);
-
-        // Ribs across the road every 4 preview samples. Hidden in "See disps"
-        // mode, where the displacement brush outlines replace them as the bands.
-        if (!ShowSegments)
+        foreach (RoadChain chain in _doc.BuildChains())
         {
-            for (int i = 0; i < mesh.Center.Count; i += 4)
+            if (chain.Points.Count < 2)
             {
-                g.DrawLine(rib, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.Right[i]));
+                continue;
+            }
+
+            RoadPreviewMesh mesh = RoadPreviewMesh.Build(chain.Points, stepsPerSegment);
+
+            // Draw each track's own portion with that track's settings (solid
+            // sides, thickness) and active/muted color. The chain shares one
+            // spline so the road still flows smoothly through the junction.
+            foreach (ChainSpan span in chain.Spans)
+            {
+                if (span.EndPoint - span.StartPoint < 2)
+                {
+                    continue;
+                }
+
+                bool isActive = ReferenceEquals(span.Track, activeTrack);
+                int startIndex = span.StartPoint * stepsPerSegment;
+                int endIndex = (span.EndPoint - 1) * stepsPerSegment;
+                DrawMeshRange(g, mesh, span.Track.Settings, isActive, startIndex, endIndex);
             }
         }
+    }
 
-        // In the Top view the road is seen from above, so the thickness (walls and
-        // bottom edges) is hidden directly beneath the surface. Drawing them there
-        // would overdraw the cyan edge lines and muddy the colors together.
+    private void DrawMeshRange(Graphics g, RoadPreviewMesh mesh, RoadSettings settings, bool isActive, int startIndex, int endIndex)
+    {
+        if (startIndex < 0)
+        {
+            startIndex = 0;
+        }
+
+        if (endIndex > mesh.Center.Count - 1)
+        {
+            endIndex = mesh.Center.Count - 1;
+        }
+
+        if (startIndex > endIndex)
+        {
+            return;
+        }
+
+        using Pen edge = new Pen(isActive ? Color.FromArgb(80, 190, 255) : Color.FromArgb(105, 115, 130), isActive ? 2.6f : 1.6f);
+        using Pen center = new Pen(isActive ? Color.FromArgb(120, 235, 120) : Color.FromArgb(95, 105, 120), isActive ? 2.4f : 1.4f);
+        using Pen rib = new Pen(isActive ? Color.FromArgb(85, 85, 95) : Color.FromArgb(58, 60, 68), 2f);
+        using Pen wall = new Pen(isActive ? Color.FromArgb(255, 160, 70) : Color.FromArgb(80, 85, 98), 2.2f);
+
         bool showThickness = _plane != PlaneKind.Top;
 
-        // Each side's bottom edge is drawn independently so the walls terminate on a
-        // visible line without connecting underneath (no fake bottom) unless the bottom
-        // face is enabled.
-        if (showThickness && hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidLeft))
-        {
-            DrawPolyline(g, mesh.BottomLeft, wall);
-        }
+        DrawPolylineRange(g, mesh.Left, edge, startIndex, endIndex);
+        DrawPolylineRange(g, mesh.Right, edge, startIndex, endIndex);
+        DrawPolylineRange(g, mesh.Center, center, startIndex, endIndex);
 
-        if (showThickness && hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidRight))
+        if (!ShowSegments)
         {
-            DrawPolyline(g, mesh.BottomRight, wall);
-        }
-
-        if (showThickness && hasThickness && _doc.Settings.SolidLeft)
-        {
-            for (int i = 0; i < mesh.Center.Count; i += 4)
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                g.DrawLine(wall, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.BottomLeft[i]));
+                if (i % 4 == 0)
+                {
+                    g.DrawLine(rib, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.Right[i]));
+                }
             }
         }
 
-        if (showThickness && hasThickness && _doc.Settings.SolidRight)
+        if (showThickness && (settings.SolidBottom || settings.SolidLeft))
         {
-            for (int i = 0; i < mesh.Center.Count; i += 4)
+            DrawPolylineRange(g, mesh.BottomLeft, wall, startIndex, endIndex);
+        }
+
+        if (showThickness && (settings.SolidBottom || settings.SolidRight))
+        {
+            DrawPolylineRange(g, mesh.BottomRight, wall, startIndex, endIndex);
+        }
+
+        if (showThickness && settings.SolidLeft)
+        {
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                g.DrawLine(wall, WorldToScreenF(mesh.Right[i]), WorldToScreenF(mesh.BottomRight[i]));
+                if (i % 4 == 0)
+                {
+                    g.DrawLine(wall, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.BottomLeft[i]));
+                }
             }
         }
 
-        // Bottom face: draw connecting ribs under the road so the bottom is
-        // visible in the side/front views too (mirrors the 3D view's bottom).
-        if (showThickness && hasThickness && _doc.Settings.SolidBottom && !ShowSegments)
+        if (showThickness && settings.SolidRight)
         {
-            for (int i = 0; i < mesh.Center.Count; i += 4)
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                g.DrawLine(rib, WorldToScreenF(mesh.BottomLeft[i]), WorldToScreenF(mesh.BottomRight[i]));
+                if (i % 4 == 0)
+                {
+                    g.DrawLine(wall, WorldToScreenF(mesh.Right[i]), WorldToScreenF(mesh.BottomRight[i]));
+                }
+            }
+        }
+
+        if (showThickness && settings.SolidBottom && !ShowSegments)
+        {
+            for (int i = startIndex; i <= endIndex; i++)
+            {
+                if (i % 4 == 0)
+                {
+                    g.DrawLine(rib, WorldToScreenF(mesh.BottomLeft[i]), WorldToScreenF(mesh.BottomRight[i]));
+                }
+            }
+        }
+    }
+
+    private void DrawPolylineRange(Graphics g, IReadOnlyList<Vec3> points, Pen pen, int startIndex, int endIndex)
+    {
+        if (startIndex >= endIndex)
+        {
+            return;
+        }
+
+        PointF previous = WorldToScreenF(points[startIndex]);
+        for (int index = startIndex + 1; index <= endIndex; index++)
+        {
+            PointF current = WorldToScreenF(points[index]);
+            g.DrawLine(pen, previous, current);
+            previous = current;
+        }
+    }
+
+    private void DrawInactivePoints(Graphics g)
+    {
+        if (_doc == null)
+        {
+            return;
+        }
+
+        Track activeTrack = _doc.ActiveTrack;
+        using Brush fill = new SolidBrush(Color.FromArgb(110, 115, 125));
+
+        foreach (Track track in _doc.Tracks)
+        {
+            if (ReferenceEquals(track, activeTrack))
+            {
+                continue;
+            }
+
+            foreach (RoadPoint point in track.Points)
+            {
+                PointF s = WorldToScreenF(point.Position);
+                g.FillEllipse(fill, s.X - 3, s.Y - 3, 6, 6);
             }
         }
     }
@@ -403,13 +509,13 @@ public sealed class Viewport2D : Control
         }
 
         var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings);
-        double thickness = _doc.Settings.Thickness;
-        Vec3 down = new Vec3(0, 0, -1) * thickness;
         using Pen pen = new Pen(Color.FromArgb(255, 100, 220), 1.1f);
         foreach (SegmentLayout.Segment seg in segments)
         {
             Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
-            Vec3 a2 = a + down, b2 = b + down, c2 = c + down, d2 = d + down;
+            Vec3 downStart = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T0);
+            Vec3 downEnd = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T1);
+            Vec3 a2 = a + downStart, b2 = b + downEnd, c2 = c + downEnd, d2 = a2 + c2 - b2;
 
             // Top face: the base parallelogram Hammer reconstructs.
             g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(b));
@@ -417,18 +523,15 @@ public sealed class Viewport2D : Control
             g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(d));
             g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(a));
 
-            if (thickness > 0)
-            {
-                g.DrawLine(pen, WorldToScreenF(a2), WorldToScreenF(b2));
-                g.DrawLine(pen, WorldToScreenF(b2), WorldToScreenF(c2));
-                g.DrawLine(pen, WorldToScreenF(c2), WorldToScreenF(d2));
-                g.DrawLine(pen, WorldToScreenF(d2), WorldToScreenF(a2));
+            g.DrawLine(pen, WorldToScreenF(a2), WorldToScreenF(b2));
+            g.DrawLine(pen, WorldToScreenF(b2), WorldToScreenF(c2));
+            g.DrawLine(pen, WorldToScreenF(c2), WorldToScreenF(d2));
+            g.DrawLine(pen, WorldToScreenF(d2), WorldToScreenF(a2));
 
-                g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(a2));
-                g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(b2));
-                g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(c2));
-                g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(d2));
-            }
+            g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(a2));
+            g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(b2));
+            g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(c2));
+            g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(d2));
         }
     }
 
@@ -504,22 +607,6 @@ public sealed class Viewport2D : Control
             DashStyle = DashStyle.Dash
         };
         g.DrawRectangle(pen, RectangleFromPoints(_boxStart, _boxCurrent));
-    }
-
-    private void DrawPolyline(Graphics g, IReadOnlyList<Vec3> pts, Pen pen)
-    {
-        if (pts.Count < 2)
-        {
-            return;
-        }
-
-        PointF prev = WorldToScreenF(pts[0]);
-        for (int i = 1; i < pts.Count; i++)
-        {
-            PointF cur = WorldToScreenF(pts[i]);
-            g.DrawLine(pen, prev, cur);
-            prev = cur;
-        }
     }
 
     // ----- world/screen mapping -----
@@ -706,10 +793,24 @@ public sealed class Viewport2D : Control
                 double outOfPlane = OutOfPlane(_dragOrigin);
                 Vec3 world = Snap(ScreenToWorld(e.Location, outOfPlane));
                 Vec3 delta = world - _dragOrigin;
+                bool breakWeld = (ModifierKeys & Keys.Shift) != 0;
 
                 for (int k = 0; k < _moveIndices.Count; k++)
                 {
-                    _doc.Points[_moveIndices[k]].Position = _moveOrigins[k] + delta;
+                    int pointIndex = _moveIndices[k];
+                    Vec3 newPosition = _moveOrigins[k] + delta;
+
+                    if (breakWeld)
+                    {
+                        // Shift+drag moves only this point, leaving any welded
+                        // points in other tracks behind (breaks the weld).
+                        _doc.Points[pointIndex].Position = newPosition;
+                    }
+                    else
+                    {
+                        Vec3 oldPosition = _doc.Points[pointIndex].Position;
+                        _doc.MovePointWelded(_doc.ActiveTrack, pointIndex, newPosition, oldPosition);
+                    }
                 }
 
                 _doc.NotifyChanged();
@@ -782,7 +883,7 @@ public sealed class Viewport2D : Control
                 PointAddBegin?.Invoke();
                 double outOfPlane = GetDefaultOutOfPlane();
                 Vec3 world = Snap(ScreenToWorld(e.Location, outOfPlane));
-                _doc.Points.Add(new RoadPoint(world, GetDefaultWidth(), GetDefaultBank()));
+                _doc.Points.Add(new RoadPoint(world, GetDefaultWidth(), GetDefaultBank(), GetDefaultThickness()));
                 _doc.NotifyChanged();
                 PointAdded?.Invoke(_doc.Points.Count - 1);
             }
@@ -895,5 +996,16 @@ public sealed class Viewport2D : Control
         }
 
         return 0;
+    }
+
+    private double GetDefaultThickness()
+    {
+        int sel = GetSelectedIndex();
+        if (sel >= 0 && _doc != null && sel < _doc.Points.Count)
+        {
+            return _doc.Points[sel].Thickness;
+        }
+
+        return 64;
     }
 }

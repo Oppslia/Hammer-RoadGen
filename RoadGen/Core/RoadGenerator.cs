@@ -7,93 +7,134 @@ namespace RoadGen.Core;
 /// <summary>Turns a road document into a complete VMF file.</summary>
 public static class RoadGenerator
 {
-    public static string GenerateVmf(RoadDocument doc)
+    public static string GenerateVmf(RoadDocument document)
     {
-        var pts = doc.Points;
-        var s = doc.Settings;
-
-        if (pts.Count < 2)
-        {
-            throw new InvalidOperationException("The road needs at least two control points.");
-        }
-
-        if (s.Power < 2 || s.Power > 4)
-        {
-            throw new InvalidOperationException("Displacement power must be 2, 3 or 4.");
-        }
-
-        int res = 1 << s.Power;
-        double maxSegment = Math.Max(1.0, s.SegmentLength);
-
-        var sb = new StringBuilder();
-        sb.Append(Vmf.Header);
+        StringBuilder output = new StringBuilder();
+        output.Append(Vmf.Header);
 
         int solidId = 2;
-        double textureV = 0;
-        var walker = new FrameWalker();
+        bool generatedAnyTrack = false;
 
-        for (int seg = 0; seg < pts.Count - 1; seg++)
+        foreach (RoadChain chain in document.BuildChains())
         {
-            double arcLength = ApproximateArcLength(pts, seg);
-            int subdiv = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
-
-            for (int k = 0; k < subdiv; k++)
+            if (chain.Points.Count < 2)
             {
-                double t0 = seg + (double)k / subdiv;
-                double t1 = seg + (double)(k + 1) / subdiv;
-                Vec3[,] grid = RoadSurface.SampleGrid(pts, t0, t1, res, walker);
-                sb.Append(DisplacementSegment.Build(solidId++, grid, s, textureV, out double advance));
-                textureV += advance;
+                continue;
+            }
+
+            AppendDisplacementChain(output, chain, ref solidId);
+            generatedAnyTrack = true;
+        }
+
+        if (!generatedAnyTrack)
+        {
+            throw new InvalidOperationException("Add at least two control points to a track.");
+        }
+
+        output.Append(Vmf.Footer);
+        return output.ToString();
+    }
+
+    private static void AppendDisplacementChain(StringBuilder output, RoadChain chain, ref int solidId)
+    {
+        List<RoadPoint> points = chain.Points;
+
+        double textureV = 0;
+        FrameWalker walker = new FrameWalker();
+
+        for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
+        {
+            RoadSettings settings = SettingsForSegment(chain, segmentIndex);
+            int power = Math.Clamp(settings.Power, 2, 4);
+            int resolution = 1 << power;
+            double maxSegment = Math.Max(1.0, settings.SegmentLength);
+
+            double arcLength = RoadCurve.ArcLength(points, segmentIndex);
+            int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+
+            for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
+            {
+                double startT = segmentIndex + (double)pieceIndex / subdivision;
+                double endT = segmentIndex + (double)(pieceIndex + 1) / subdivision;
+                Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker);
+                double thicknessStart = RoadCurve.Thickness(points, startT);
+                double thicknessEnd = RoadCurve.Thickness(points, endT);
+                output.Append(DisplacementSegment.Build(solidId++, grid, thicknessStart, thicknessEnd, settings, textureV, out double textureAdvance));
+                textureV += textureAdvance;
+            }
+        }
+    }
+
+    private static RoadSettings SettingsForSegment(RoadChain chain, int segmentIndex)
+    {
+        foreach (ChainSpan span in chain.Spans)
+        {
+            if (segmentIndex >= span.StartPoint && segmentIndex < span.EndPoint - 1)
+            {
+                return span.Track.Settings;
             }
         }
 
-        sb.Append(Vmf.Footer);
-        return sb.ToString();
+        return chain.Settings;
     }
 
-    /// <summary>Turns a road document into a VMF file made of plain solid brushes
+    /// <summary>Turns every track into a VMF file made of plain solid brushes
     /// (two tetrahedra per sampled cell) instead of displacement surfaces.</summary>
     [Obsolete("Experimental brush export. Disabled by default; uncomment the UI wiring to use it.")]
-    public static string GenerateBrushes(RoadDocument doc)
+    public static string GenerateBrushes(RoadDocument document)
     {
-        var pts = doc.Points;
-        var s = doc.Settings;
-
-        if (pts.Count < 2)
-        {
-            throw new InvalidOperationException("The road needs at least two control points.");
-        }
-
-        int power = Math.Clamp(s.Power, 2, 4);
-        int res = 1 << power;
-        double maxSegment = Math.Max(1.0, s.SegmentLength);
-
-        var sb = new StringBuilder();
-        sb.Append(Vmf.Header);
+        StringBuilder output = new StringBuilder();
+        output.Append(Vmf.Header);
 
         int solidId = 2;
-        var walker = new FrameWalker();
+        bool generatedAnyTrack = false;
 
-        for (int seg = 0; seg < pts.Count - 1; seg++)
+        foreach (RoadChain chain in document.BuildChains())
         {
-            double arcLength = ApproximateArcLength(pts, seg);
-            int subdiv = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
-
-            for (int k = 0; k < subdiv; k++)
+            if (chain.Points.Count < 2)
             {
-                double t0 = seg + (double)k / subdiv;
-                double t1 = seg + (double)(k + 1) / subdiv;
-                Vec3[,] grid = RoadSurface.SampleGrid(pts, t0, t1, res, walker);
+                continue;
+            }
+
+            AppendBrushChain(output, chain, ref solidId);
+            generatedAnyTrack = true;
+        }
+
+        if (!generatedAnyTrack)
+        {
+            throw new InvalidOperationException("Add at least two control points to a track.");
+        }
+
+        output.Append(Vmf.Footer);
+        return output.ToString();
+    }
+
+    private static void AppendBrushChain(StringBuilder output, RoadChain chain, ref int solidId)
+    {
+        List<RoadPoint> points = chain.Points;
+
+        FrameWalker walker = new FrameWalker();
+
+        for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
+        {
+            RoadSettings settings = SettingsForSegment(chain, segmentIndex);
+            int power = Math.Clamp(settings.Power, 2, 4);
+            int resolution = 1 << power;
+            double maxSegment = Math.Max(1.0, settings.SegmentLength);
+
+            double arcLength = RoadCurve.ArcLength(points, segmentIndex);
+            int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+
+            for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
+            {
+                double startT = segmentIndex + (double)pieceIndex / subdivision;
+                double endT = segmentIndex + (double)(pieceIndex + 1) / subdivision;
+                Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker);
+                double brushThickness = RoadCurve.Thickness(points, segmentIndex);
 #pragma warning disable CS0618 // BrushSegment is experimental/deprecated
-                sb.Append(BrushSegment.Build(grid, s, ref solidId));
+                output.Append(BrushSegment.Build(grid, brushThickness, settings, ref solidId));
 #pragma warning restore CS0618
             }
         }
-
-        sb.Append(Vmf.Footer);
-        return sb.ToString();
     }
-
-    private static double ApproximateArcLength(IReadOnlyList<RoadPoint> pts, int segment)
-        => RoadCurve.ArcLength(pts, segment);
 }

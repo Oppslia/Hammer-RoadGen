@@ -33,14 +33,15 @@ namespace RoadGen.Core;
 public static class TrackFile
 {
     /// <summary>The version this build writes to disk. Bump whenever the format changes.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     /// <summary>One entry per historical version gap. Index 0 migrates v1->v2,
     /// index 1 migrates v2->v3, and so on.</summary>
     private static readonly Action<JsonObject>[] Migrations =
     {
-        Migrate1To2
-        // Migrate2To3, Migrate3To4, ... append future migrations here.
+        Migrate1To2,
+        Migrate2To3
+        // Migrate3To4, ... append future migrations here.
     };
 
     public sealed class TrackLoadResult
@@ -54,6 +55,14 @@ public static class TrackFile
     private sealed class TrackData
     {
         public int Version { get; set; } = 1;
+        public List<TrackItemData> Tracks { get; set; } = new List<TrackItemData>();
+    }
+
+    private sealed class TrackItemData
+    {
+        public string Name { get; set; } = "Track";
+        // Nullable so files saved before this flag existed load as enabled.
+        public bool? EnableJoining { get; set; }
         public SettingsData Settings { get; set; } = new SettingsData();
         public List<PointData> Points { get; set; } = new List<PointData>();
     }
@@ -62,7 +71,6 @@ public static class TrackFile
     {
         public int Power { get; set; }
         public string Material { get; set; } = "CONCRETE/CONCRETEFLOOR005A";
-        public double Thickness { get; set; }
         // Always present after migration; false is only a fallback for malformed files.
         public bool SolidLeft { get; set; }
         public bool SolidRight { get; set; }
@@ -90,51 +98,64 @@ public static class TrackFile
         public double Z { get; set; }
         public double Width { get; set; }
         public double Bank { get; set; }
+        // Nullable so files saved before per-point thickness load as the default.
+        public double? Thickness { get; set; }
     }
 
-    public static void Save(RoadDocument doc, string path)
+    public static void Save(RoadDocument document, string path)
     {
-        var data = new TrackData
+        TrackData data = new TrackData
         {
             Version = CurrentVersion
         };
-        data.Settings = new SettingsData
-        {
-            Power = doc.Settings.Power,
-            Material = doc.Settings.Material,
-            Thickness = doc.Settings.Thickness,
-            SolidLeft = doc.Settings.SolidLeft,
-            SolidRight = doc.Settings.SolidRight,
-            SolidBottom = doc.Settings.SolidBottom,
-            SegmentLength = doc.Settings.SegmentLength,
-            TextureScale = doc.Settings.TextureScale,
-            LightmapScale = doc.Settings.LightmapScale,
-            Snap = doc.Settings.Snap,
-            IncUseGridX = doc.Settings.IncUseGridX,
-            IncUseGridY = doc.Settings.IncUseGridY,
-            IncUseGridZ = doc.Settings.IncUseGridZ,
-            IncUseGridWidth = doc.Settings.IncUseGridWidth,
-            IncUseGridBank = doc.Settings.IncUseGridBank,
-            IncCustomX = doc.Settings.IncCustomX,
-            IncCustomY = doc.Settings.IncCustomY,
-            IncCustomZ = doc.Settings.IncCustomZ,
-            IncCustomWidth = doc.Settings.IncCustomWidth,
-            IncCustomBank = doc.Settings.IncCustomBank
-        };
 
-        foreach (RoadPoint p in doc.Points)
+        foreach (Track track in document.Tracks)
         {
-            data.Points.Add(new PointData
+            TrackItemData trackItem = new TrackItemData
             {
-                X = p.Position.X,
-                Y = p.Position.Y,
-                Z = p.Position.Z,
-                Width = p.Width,
-                Bank = p.BankDegrees
-            });
+                Name = track.Name,
+                EnableJoining = track.EnableJoining,
+                Settings = new SettingsData
+                {
+                    Power = track.Settings.Power,
+                    Material = track.Settings.Material,
+                    SolidLeft = track.Settings.SolidLeft,
+                    SolidRight = track.Settings.SolidRight,
+                    SolidBottom = track.Settings.SolidBottom,
+                    SegmentLength = track.Settings.SegmentLength,
+                    TextureScale = track.Settings.TextureScale,
+                    LightmapScale = track.Settings.LightmapScale,
+                    Snap = track.Settings.Snap,
+                    IncUseGridX = track.Settings.IncUseGridX,
+                    IncUseGridY = track.Settings.IncUseGridY,
+                    IncUseGridZ = track.Settings.IncUseGridZ,
+                    IncUseGridWidth = track.Settings.IncUseGridWidth,
+                    IncUseGridBank = track.Settings.IncUseGridBank,
+                    IncCustomX = track.Settings.IncCustomX,
+                    IncCustomY = track.Settings.IncCustomY,
+                    IncCustomZ = track.Settings.IncCustomZ,
+                    IncCustomWidth = track.Settings.IncCustomWidth,
+                    IncCustomBank = track.Settings.IncCustomBank
+                }
+            };
+
+            foreach (RoadPoint point in track.Points)
+            {
+                trackItem.Points.Add(new PointData
+                {
+                    X = point.Position.X,
+                    Y = point.Position.Y,
+                    Z = point.Position.Z,
+                    Width = point.Width,
+                    Bank = point.BankDegrees,
+                    Thickness = point.Thickness
+                });
+            }
+
+            data.Tracks.Add(trackItem);
         }
 
-        var options = new JsonSerializerOptions { WriteIndented = true };
+        JsonSerializerOptions options = new JsonSerializerOptions { WriteIndented = true };
         File.WriteAllText(path, JsonSerializer.Serialize(data, options));
     }
 
@@ -169,42 +190,65 @@ public static class TrackFile
 
     private static RoadDocument BuildDocument(TrackData data)
     {
-        var doc = new RoadDocument();
-        if (data.Settings != null)
-        {
-            doc.Settings.Power = data.Settings.Power;
-            doc.Settings.Material = string.IsNullOrWhiteSpace(data.Settings.Material)
-                ? "CONCRETE/CONCRETEFLOOR005A"
-                : data.Settings.Material;
-            doc.Settings.Thickness = data.Settings.Thickness;
-            doc.Settings.SolidLeft = data.Settings.SolidLeft;
-            doc.Settings.SolidRight = data.Settings.SolidRight;
-            doc.Settings.SolidBottom = data.Settings.SolidBottom;
-            doc.Settings.SegmentLength = data.Settings.SegmentLength;
-            doc.Settings.TextureScale = data.Settings.TextureScale;
-            doc.Settings.LightmapScale = data.Settings.LightmapScale;
-            doc.Settings.Snap = data.Settings.Snap;
-            doc.Settings.IncUseGridX = data.Settings.IncUseGridX;
-            doc.Settings.IncUseGridY = data.Settings.IncUseGridY;
-            doc.Settings.IncUseGridZ = data.Settings.IncUseGridZ;
-            doc.Settings.IncUseGridWidth = data.Settings.IncUseGridWidth;
-            doc.Settings.IncUseGridBank = data.Settings.IncUseGridBank;
-            doc.Settings.IncCustomX = data.Settings.IncCustomX;
-            doc.Settings.IncCustomY = data.Settings.IncCustomY;
-            doc.Settings.IncCustomZ = data.Settings.IncCustomZ;
-            doc.Settings.IncCustomWidth = data.Settings.IncCustomWidth;
-            doc.Settings.IncCustomBank = data.Settings.IncCustomBank;
-        }
+        RoadDocument document = new RoadDocument();
+        document.Tracks.Clear();
 
-        if (data.Points != null)
+        if (data.Tracks != null && data.Tracks.Count > 0)
         {
-            foreach (PointData p in data.Points)
+            foreach (TrackItemData trackItem in data.Tracks)
             {
-                doc.Points.Add(new RoadPoint(new Vec3(p.X, p.Y, p.Z), p.Width, p.Bank));
+                string name = string.IsNullOrWhiteSpace(trackItem.Name) ? "Track" : trackItem.Name;
+                Track track = new Track(name);
+                track.EnableJoining = trackItem.EnableJoining ?? true;
+                ApplySettings(track.Settings, trackItem.Settings);
+
+                if (trackItem.Points != null)
+                {
+                    foreach (PointData point in trackItem.Points)
+                    {
+                        track.Points.Add(new RoadPoint(new Vec3(point.X, point.Y, point.Z), point.Width, point.Bank, point.Thickness ?? 64));
+                    }
+                }
+
+                document.Tracks.Add(track);
             }
         }
 
-        return doc;
+        if (document.Tracks.Count == 0)
+        {
+            document.Tracks.Add(new Track("Track 1"));
+        }
+
+        document.ActiveTrackIndex = 0;
+        return document;
+    }
+
+    private static void ApplySettings(RoadSettings settings, SettingsData data)
+    {
+        if (data == null)
+        {
+            return;
+        }
+
+        settings.Power = data.Power;
+        settings.Material = string.IsNullOrWhiteSpace(data.Material) ? "CONCRETE/CONCRETEFLOOR005A" : data.Material;
+        settings.SolidLeft = data.SolidLeft;
+        settings.SolidRight = data.SolidRight;
+        settings.SolidBottom = data.SolidBottom;
+        settings.SegmentLength = data.SegmentLength;
+        settings.TextureScale = data.TextureScale;
+        settings.LightmapScale = data.LightmapScale;
+        settings.Snap = data.Snap;
+        settings.IncUseGridX = data.IncUseGridX;
+        settings.IncUseGridY = data.IncUseGridY;
+        settings.IncUseGridZ = data.IncUseGridZ;
+        settings.IncUseGridWidth = data.IncUseGridWidth;
+        settings.IncUseGridBank = data.IncUseGridBank;
+        settings.IncCustomX = data.IncCustomX;
+        settings.IncCustomY = data.IncCustomY;
+        settings.IncCustomZ = data.IncCustomZ;
+        settings.IncCustomWidth = data.IncCustomWidth;
+        settings.IncCustomBank = data.IncCustomBank;
     }
 
     /// <summary>v1 -> v2: adds the fields introduced with Solid Roads and the
@@ -232,5 +276,37 @@ public static class TrackFile
         if (s["IncCustomZ"] == null) s["IncCustomZ"] = 64.0;
         if (s["IncCustomWidth"] == null) s["IncCustomWidth"] = 64.0;
         if (s["IncCustomBank"] == null) s["IncCustomBank"] = 4.0;
+    }
+
+    /// <summary>v2 -> v3: wrap the single top-level road into a Tracks array of one
+    /// track, matching the multi-track document shape.</summary>
+    private static void Migrate2To3(JsonObject root)
+    {
+        if (root["Tracks"] != null)
+        {
+            return; // already v3+
+        }
+
+        JsonNode settingsNode = root["Settings"];
+        JsonNode pointsNode = root["Points"];
+
+        JsonObject track = new JsonObject
+        {
+            ["Name"] = "Track 1"
+        };
+
+        if (settingsNode != null)
+        {
+            track["Settings"] = settingsNode.DeepClone();
+        }
+
+        if (pointsNode != null)
+        {
+            track["Points"] = pointsNode.DeepClone();
+        }
+
+        root["Tracks"] = new JsonArray(track);
+        root.Remove("Settings");
+        root.Remove("Points");
     }
 }

@@ -80,6 +80,23 @@ public static class RoadCurve
         return pts[i].BankDegrees + (pts[i + 1].BankDegrees - pts[i].BankDegrees) * u;
     }
 
+    public static double Thickness(IReadOnlyList<RoadPoint> pts, double t)
+    {
+        int n = pts.Count;
+        if (n == 0)
+        {
+            return 0;
+        }
+
+        if (n == 1)
+        {
+            return pts[0].Thickness;
+        }
+
+        GetSegmentAndU(n, t, out int i, out double u);
+        return pts[i].Thickness + (pts[i + 1].Thickness - pts[i].Thickness) * u;
+    }
+
     /// <summary>Approximate the curved length of one control-point span, in units.</summary>
     public static double ArcLength(IReadOnlyList<RoadPoint> pts, int segment)
     {

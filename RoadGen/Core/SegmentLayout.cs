@@ -17,6 +17,11 @@ public static class SegmentLayout
         public Vec3 B;
         public Vec3 C;
         public Vec3 D;
+
+        /// <summary>Road parameter at each end of this segment, used to look up the
+        /// interpolated thickness for the preview boxes.</summary>
+        public double T0;
+        public double T1;
     }
 
     /// <summary>Subdivide the road exactly like the exporter and return one entry
@@ -63,7 +68,9 @@ public static class SegmentLayout
                     A = a,
                     B = b,
                     C = c,
-                    D = a + c - b // parallelogram completion, as Hammer reconstructs it
+                    D = a + c - b, // parallelogram completion, as Hammer reconstructs it
+                    T0 = t0,
+                    T1 = t1
                 });
             }
         }

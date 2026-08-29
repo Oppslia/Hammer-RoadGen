@@ -9,90 +9,33 @@ public sealed class UndoManager
 {
     private sealed class Snapshot
     {
-        public readonly List<RoadPoint> Points = new List<RoadPoint>();
-        public int Power;
-        public string Material = string.Empty;
-        public double Thickness;
-        public bool SolidLeft;
-        public bool SolidRight;
-        public bool SolidBottom;
-        public double SegmentLength;
-        public double TextureScale;
-        public double Snap;
-        public int LightmapScale;
-        public bool IncUseGridX;
-        public bool IncUseGridY;
-        public bool IncUseGridZ;
-        public bool IncUseGridWidth;
-        public bool IncUseGridBank;
-        public double IncCustomX;
-        public double IncCustomY;
-        public double IncCustomZ;
-        public double IncCustomWidth;
-        public double IncCustomBank;
+        public readonly List<Track> Tracks = new List<Track>();
+        public int ActiveTrackIndex;
 
-        public static Snapshot Capture(RoadDocument doc)
+        public static Snapshot Capture(RoadDocument document)
         {
-            var s = new Snapshot
+            Snapshot snapshot = new Snapshot
             {
-                Power = doc.Settings.Power,
-                Material = doc.Settings.Material,
-                Thickness = doc.Settings.Thickness,
-                SolidLeft = doc.Settings.SolidLeft,
-                SolidRight = doc.Settings.SolidRight,
-                SolidBottom = doc.Settings.SolidBottom,
-                SegmentLength = doc.Settings.SegmentLength,
-                TextureScale = doc.Settings.TextureScale,
-                Snap = doc.Settings.Snap,
-                LightmapScale = doc.Settings.LightmapScale,
-                IncUseGridX = doc.Settings.IncUseGridX,
-                IncUseGridY = doc.Settings.IncUseGridY,
-                IncUseGridZ = doc.Settings.IncUseGridZ,
-                IncUseGridWidth = doc.Settings.IncUseGridWidth,
-                IncUseGridBank = doc.Settings.IncUseGridBank,
-                IncCustomX = doc.Settings.IncCustomX,
-                IncCustomY = doc.Settings.IncCustomY,
-                IncCustomZ = doc.Settings.IncCustomZ,
-                IncCustomWidth = doc.Settings.IncCustomWidth,
-                IncCustomBank = doc.Settings.IncCustomBank
+                ActiveTrackIndex = document.ActiveTrackIndex
             };
 
-            foreach (RoadPoint p in doc.Points)
+            foreach (Track track in document.Tracks)
             {
-                s.Points.Add(p.Clone());
+                snapshot.Tracks.Add(track.Clone());
             }
 
-            return s;
+            return snapshot;
         }
 
-        public void Restore(RoadDocument doc)
+        public void Restore(RoadDocument document)
         {
-            doc.Points.Clear();
-            foreach (RoadPoint p in Points)
+            document.Tracks.Clear();
+            foreach (Track track in Tracks)
             {
-                doc.Points.Add(p.Clone());
+                document.Tracks.Add(track.Clone());
             }
 
-            doc.Settings.Power = Power;
-            doc.Settings.Material = Material;
-            doc.Settings.Thickness = Thickness;
-            doc.Settings.SolidLeft = SolidLeft;
-            doc.Settings.SolidRight = SolidRight;
-            doc.Settings.SolidBottom = SolidBottom;
-            doc.Settings.SegmentLength = SegmentLength;
-            doc.Settings.TextureScale = TextureScale;
-            doc.Settings.Snap = Snap;
-            doc.Settings.LightmapScale = LightmapScale;
-            doc.Settings.IncUseGridX = IncUseGridX;
-            doc.Settings.IncUseGridY = IncUseGridY;
-            doc.Settings.IncUseGridZ = IncUseGridZ;
-            doc.Settings.IncUseGridWidth = IncUseGridWidth;
-            doc.Settings.IncUseGridBank = IncUseGridBank;
-            doc.Settings.IncCustomX = IncCustomX;
-            doc.Settings.IncCustomY = IncCustomY;
-            doc.Settings.IncCustomZ = IncCustomZ;
-            doc.Settings.IncCustomWidth = IncCustomWidth;
-            doc.Settings.IncCustomBank = IncCustomBank;
+            document.ActiveTrackIndex = ActiveTrackIndex;
         }
     }
 

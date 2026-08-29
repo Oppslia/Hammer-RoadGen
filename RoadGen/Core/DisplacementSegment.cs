@@ -12,7 +12,7 @@ namespace RoadGen.Core;
 /// together with no cracks.</summary>
 public static class DisplacementSegment
 {
-    public static string Build(int solidId, Vec3[,] grid, RoadSettings s, double textureVStart, out double textureVAdvance)
+    public static string Build(int solidId, Vec3[,] grid, double thicknessStart, double thicknessEnd, RoadSettings s, double textureVStart, out double textureVAdvance)
     {
         int res = grid.GetLength(0) - 1;
 
@@ -32,13 +32,15 @@ public static class DisplacementSegment
         // The road body hangs straight down from the surface. Using a fixed
         // vertical offset (rather than a per-segment surface normal) keeps the
         // thickness direction identical across segments, so adjacent side walls
-        // and bottoms sew together with no cracks.
+        // and bottoms sew together with no cracks. Thickness is interpolated per
+        // point, so the start and end depths can differ and the bottom face tilts
+        // to match.
         Vec3 down = new Vec3(0, 0, -1);
 
-        Vec3 A2 = A + down * s.Thickness;
-        Vec3 B2 = B + down * s.Thickness;
-        Vec3 C2 = C + down * s.Thickness;
-        Vec3 D2 = D + down * s.Thickness;
+        Vec3 A2 = A + down * thicknessStart;
+        Vec3 B2 = B + down * thicknessEnd;
+        Vec3 C2 = C + down * thicknessEnd;
+        Vec3 D2 = A2 + C2 - B2;
 
         // Precompute the top surface displacement (normals + distances relative to
         // the flat base parallelogram). These are reused so the side-wall

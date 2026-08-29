@@ -21,13 +21,22 @@ public sealed class MainForm : Form
     private SplitContainer _split;
 
     private readonly ListView _list = new ListView();
+    private readonly ListBox _lstLayers = new ListBox();
+    private readonly Button _btnAddLayer = new Button();
+    private readonly Button _btnRemoveLayer = new Button();
+    private readonly Button _btnRenameLayer = new Button();
+    private readonly Button _btnDuplicateLayer = new Button();
+    private readonly Button _btnMergeLayer = new Button();
+    private readonly Button _btnLayerUp = new Button();
+    private readonly Button _btnLayerDown = new Button();
+    private readonly CheckBox _chkEnableJoining = new CheckBox();
     private readonly NumericUpDown _numX = new NumericUpDown();
     private readonly NumericUpDown _numY = new NumericUpDown();
     private readonly NumericUpDown _numZ = new NumericUpDown();
     private readonly NumericUpDown _numWidth = new NumericUpDown();
     private readonly NumericUpDown _numBank = new NumericUpDown();
+    private readonly NumericUpDown _numPointThickness = new NumericUpDown();
 
-    private readonly NumericUpDown _numThickness = new NumericUpDown();
     private readonly NumericUpDown _numTexScale = new NumericUpDown();
     private readonly ComboBox _cboLightmap = new ComboBox();
     private readonly ComboBox _cboSnap = new ComboBox();
@@ -75,6 +84,7 @@ public sealed class MainForm : Form
     private double _prevZ;
     private double _prevWidth;
     private double _prevBank;
+    private double _prevThickness;
 
     public MainForm()
     {
@@ -97,6 +107,8 @@ public sealed class MainForm : Form
         _suppressDirty = false;
         _dirty = false;
 
+        RefreshLayerList();
+        LoadJoiningIntoControl();
         RefreshList();
         SelectPoint(0);
         FrameAll();
@@ -195,7 +207,7 @@ public sealed class MainForm : Form
         var status = new StatusStrip();
         status.Items.Add(new ToolStripStatusLabel
         {
-            Text = "2D: ctrl+click add, drag to move, drag empty space to box-select  •  3D: right-drag orbit, middle-drag pan, click select"
+            Text = "2D: ctrl+click add, drag to move, shift+drag breaks a weld, drag empty space to box-select  •  3D: right-drag orbit, middle-drag pan, click select"
         });
 
         var content = new Panel { Dock = DockStyle.Fill };
@@ -231,19 +243,20 @@ public sealed class MainForm : Form
         _list.Columns.Add("Z", 60, HorizontalAlignment.Right);
         _list.Columns.Add("Width", 62, HorizontalAlignment.Right);
         _list.Columns.Add("Bank", 62, HorizontalAlignment.Right);
+        _list.Columns.Add("Thickness", 70, HorizontalAlignment.Right);
         pointsGroup.Controls.Add(_list);
 
         var editor = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
             Height = 60,
-            ColumnCount = 5,
+            ColumnCount = 6,
             RowCount = 2,
             Padding = new Padding(0, 6, 0, 0)
         };
-        for (int c = 0; c < 5; c++)
+        for (int c = 0; c < 6; c++)
         {
-            editor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+            editor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16.67f));
         }
 
         editor.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
@@ -254,6 +267,8 @@ public sealed class MainForm : Form
         AddField(editor, 2, "Z", _numZ);
         AddField(editor, 3, "Width", _numWidth);
         AddField(editor, 4, "Bank", _numBank);
+        AddField(editor, 5, "Thick", _numPointThickness);
+        _numPointThickness.Minimum = 0;
         pointsGroup.Controls.Add(editor);
 
         // Increment/Decrement interval section, docked below the editors.
@@ -300,14 +315,14 @@ public sealed class MainForm : Form
         var table = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 162,
+            Height = 135,
             ColumnCount = 2,
-            RowCount = 6,
+            RowCount = 5,
             Padding = new Padding(0)
         };
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int r = 0; r < 6; r++)
+        for (int r = 0; r < 5; r++)
         {
             table.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
         }
@@ -328,11 +343,10 @@ public sealed class MainForm : Form
 
         AddSettingRow(table, 0, "Power", _cboPower);
         AddSettingRow(table, 1, "Material", _txtMaterial);
-        AddSettingRow(table, 2, "Thickness", _numThickness);
-        AddSettingRow(table, 3, "Texture scale", _numTexScale);
+        AddSettingRow(table, 2, "Texture scale", _numTexScale);
         _numTexScale.Increment = 0.25m;
-        AddSettingRow(table, 4, "Lightmap scale", _cboLightmap);
-        AddSettingRow(table, 5, "Grid snap", _cboSnap);
+        AddSettingRow(table, 3, "Lightmap scale", _cboLightmap);
+        AddSettingRow(table, 4, "Grid snap", _cboSnap);
 
         var solidRoadsGroup = new GroupBox
         {
@@ -427,6 +441,87 @@ public sealed class MainForm : Form
         settingsGroup.Controls.Add(solidRoadsGroup);
         settingsGroup.Controls.Add(table);
 
+        var layersGroup = new GroupBox
+        {
+            Text = "Layers",
+            Dock = DockStyle.Top,
+            Height = 148,
+            Padding = new Padding(6)
+        };
+
+        _lstLayers.Dock = DockStyle.Fill;
+        _lstLayers.IntegralHeight = false;
+
+        // Up/down mover buttons live inside the layer list, on its right edge.
+        var upDownPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            Width = 30,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = new Padding(4, 0, 0, 0),
+            Padding = new Padding(0)
+        };
+
+        _btnLayerUp.Text = "\u25B2";
+        _btnLayerUp.Size = new Size(26, 24);
+        _btnLayerUp.Margin = new Padding(0, 0, 0, 2);
+        _btnLayerDown.Text = "\u25BC";
+        _btnLayerDown.Size = new Size(26, 24);
+        _btnLayerDown.Margin = new Padding(0);
+
+        upDownPanel.Controls.Add(_btnLayerUp);
+        upDownPanel.Controls.Add(_btnLayerDown);
+
+        var listRow = new Panel { Dock = DockStyle.Fill };
+        listRow.Controls.Add(_lstLayers);
+        listRow.Controls.Add(upDownPanel);
+
+        var layerButtons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 30,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0, 4, 0, 0)
+        };
+
+        _btnAddLayer.Text = "+ Add";
+        _btnAddLayer.AutoSize = true;
+        _btnRemoveLayer.Text = "- Remove";
+        _btnRemoveLayer.AutoSize = true;
+        _btnRenameLayer.Text = "Rename";
+        _btnRenameLayer.AutoSize = true;
+        _btnDuplicateLayer.Text = "Duplicate";
+        _btnDuplicateLayer.AutoSize = true;
+        _btnMergeLayer.Text = "Merge";
+        _btnMergeLayer.AutoSize = true;
+        _btnMergeLayer.Enabled = false;
+
+        StyleLayerButton(_btnAddLayer);
+        StyleLayerButton(_btnRemoveLayer);
+        StyleLayerButton(_btnRenameLayer);
+        StyleLayerButton(_btnDuplicateLayer);
+        StyleLayerButton(_btnMergeLayer);
+        StyleLayerButton(_btnLayerUp);
+        StyleLayerButton(_btnLayerDown);
+
+        layerButtons.Controls.Add(_btnAddLayer);
+        layerButtons.Controls.Add(_btnRemoveLayer);
+        layerButtons.Controls.Add(_btnRenameLayer);
+        layerButtons.Controls.Add(_btnDuplicateLayer);
+        layerButtons.Controls.Add(_btnMergeLayer);
+
+        _chkEnableJoining.Text = "Enable track joining";
+        _chkEnableJoining.Dock = DockStyle.Bottom;
+        _chkEnableJoining.Height = 22;
+        _chkEnableJoining.ForeColor = Color.LightGray;
+        _chkEnableJoining.Checked = true;
+
+        layersGroup.Controls.Add(listRow);
+        layersGroup.Controls.Add(_chkEnableJoining);
+        layersGroup.Controls.Add(layerButtons);
+
         var generate = new Button
         {
             Text = "Generate VMF...",
@@ -437,13 +532,27 @@ public sealed class MainForm : Form
         };
         generate.Click += (s, e) => Generate();
 
-        // Docking is applied in reverse z-order, so add in reverse of desired layout:
-        // settings first, points second, bottom button last.
+        // Docked controls stack in reverse z-order (last added docks first), so
+        // the last top-docked control ends up at the very top. Desired layout
+        // from top to bottom: Layers, Control Points, Road Settings, Generate.
         panel.Controls.Add(settingsGroup);
         panel.Controls.Add(pointsGroup);
+        panel.Controls.Add(layersGroup);
         panel.Controls.Add(generate);
 
         return panel;
+    }
+
+    private static void StyleLayerButton(Button button)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.BackColor = Color.White;
+        button.ForeColor = Color.Black;
+        button.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+        button.FlatAppearance.BorderColor = Color.Gray;
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(219, 232, 252);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(190, 214, 248);
     }
 
     private static void AddField(TableLayoutPanel table, int col, string label, NumericUpDown num)
@@ -563,8 +672,8 @@ public sealed class MainForm : Form
     {
         double grid = _doc.Settings.Snap > 0 ? _doc.Settings.Snap : 64;
 
-        // Thickness always follows the grid snap.
-        _numThickness.Increment = (decimal)grid;
+        // Per-point thickness increment follows the grid snap.
+        _numPointThickness.Increment = (decimal)grid;
 
         ApplyIncrement(_numX, _chkIncX, _numIncX, grid);
         ApplyIncrement(_numY, _chkIncY, _numIncY, grid);
@@ -634,6 +743,7 @@ public sealed class MainForm : Form
             _front.Invalidate();
             _side.Invalidate();
             UpdatePreviewInfo();
+            UpdateMergeButton();
 
             if (!_suppressDirty)
             {
@@ -696,15 +806,25 @@ public sealed class MainForm : Form
             InvalidateAll();
         };
 
+        _lstLayers.SelectedIndexChanged += OnLayerSelected;
+        _btnAddLayer.Click += (s, e) => AddLayer();
+        _btnRemoveLayer.Click += (s, e) => RemoveLayer();
+        _btnRenameLayer.Click += (s, e) => RenameLayer();
+        _btnDuplicateLayer.Click += (s, e) => DuplicateLayer();
+        _btnMergeLayer.Click += (s, e) => MergeTracks();
+        _btnLayerUp.Click += (s, e) => MoveLayer(-1);
+        _btnLayerDown.Click += (s, e) => MoveLayer(1);
+        _chkEnableJoining.CheckedChanged += (s, e) => ApplyJoiningFromControl();
+
         _numX.ValueChanged += (s, e) => UpdatePointFromEditors();
         _numY.ValueChanged += (s, e) => UpdatePointFromEditors();
         _numZ.ValueChanged += (s, e) => UpdatePointFromEditors();
         _numWidth.ValueChanged += (s, e) => UpdatePointFromEditors();
         _numBank.ValueChanged += (s, e) => UpdatePointFromEditors();
+        _numPointThickness.ValueChanged += (s, e) => UpdatePointFromEditors();
 
         _cboPower.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _txtMaterial.TextChanged += (s, e) => ApplySettingsFromControls();
-        _numThickness.ValueChanged += (s, e) => ApplySettingsFromControls();
         _numTexScale.ValueChanged += (s, e) => ApplySettingsFromControls();
         _cboLightmap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _cboSnap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
@@ -726,7 +846,7 @@ public sealed class MainForm : Form
         AttachUndoBatch(_numZ);
         AttachUndoBatch(_numWidth);
         AttachUndoBatch(_numBank);
-        AttachUndoBatch(_numThickness);
+        AttachUndoBatch(_numPointThickness);
         AttachUndoBatch(_numTexScale);
         AttachUndoBatch(_cboLightmap);
         AttachUndoBatch(_cboSnap);
@@ -772,15 +892,20 @@ public sealed class MainForm : Form
     private void NewRoad()
     {
         _undo.RecordSingle();
-        _doc.Points.Clear();
+        _doc.Tracks.Clear();
+        _doc.Tracks.Add(new Track("Track 1"));
+        _doc.ActiveTrackIndex = 0;
         _selectedIndex = -1;
         _currentTrackPath = null;
         _suppressDirty = true;
         _doc.NotifyChanged();
         _suppressDirty = false;
         _dirty = false;
+        RefreshLayerList();
         RefreshList();
         LoadPointIntoEditors();
+        LoadSettingsIntoControls();
+        LoadJoiningIntoControl();
         UpdateUndoButtons();
         UpdateTitle();
     }
@@ -898,18 +1023,25 @@ public sealed class MainForm : Form
         try
         {
             string text = System.IO.File.ReadAllText(dlg.FileName);
-            var points = VmfImporter.ImportRoad(text);
+            List<RoadPoint> importedPoints = VmfImporter.ImportRoad(text);
+            string sourceName = System.IO.Path.GetFileNameWithoutExtension(dlg.FileName);
+
             _undo.RecordSingle();
-            _doc.Points.Clear();
-            foreach (RoadPoint p in points)
+            Track importedTrack = new Track(NextUniqueTrackName(sourceName, "Imported road"));
+            foreach (RoadPoint point in importedPoints)
             {
-                _doc.Points.Add(p);
+                importedTrack.Points.Add(point);
             }
+
+            _doc.Tracks.Add(importedTrack);
+            _doc.ActiveTrackIndex = _doc.Tracks.Count - 1;
 
             _currentTrackPath = null;
             _dirty = true;
             _selectedIndex = -1;
-            AfterDocumentLoaded();
+            RefreshLayerList();
+            ActivateLayer();
+            UpdateUndoButtons();
             UpdateTitle();
         }
         catch (Exception ex)
@@ -920,38 +1052,25 @@ public sealed class MainForm : Form
 
     private void ApplyDocument(RoadDocument loaded)
     {
-        _doc.Points.Clear();
-        foreach (RoadPoint p in loaded.Points)
+        _doc.Tracks.Clear();
+        foreach (Track track in loaded.Tracks)
         {
-            _doc.Points.Add(p);
+            _doc.Tracks.Add(track.Clone());
         }
 
-        var s = _doc.Settings;
-        s.Power = loaded.Settings.Power;
-        s.Material = loaded.Settings.Material;
-        s.Thickness = loaded.Settings.Thickness;
-        s.SegmentLength = loaded.Settings.SegmentLength;
-        s.TextureScale = loaded.Settings.TextureScale;
-        s.LightmapScale = loaded.Settings.LightmapScale;
-        s.Snap = loaded.Settings.Snap;
-        s.SolidLeft = loaded.Settings.SolidLeft;
-        s.SolidRight = loaded.Settings.SolidRight;
-        s.SolidBottom = loaded.Settings.SolidBottom;
-        s.IncUseGridX = loaded.Settings.IncUseGridX;
-        s.IncUseGridY = loaded.Settings.IncUseGridY;
-        s.IncUseGridZ = loaded.Settings.IncUseGridZ;
-        s.IncUseGridWidth = loaded.Settings.IncUseGridWidth;
-        s.IncUseGridBank = loaded.Settings.IncUseGridBank;
-        s.IncCustomX = loaded.Settings.IncCustomX;
-        s.IncCustomY = loaded.Settings.IncCustomY;
-        s.IncCustomZ = loaded.Settings.IncCustomZ;
-        s.IncCustomWidth = loaded.Settings.IncCustomWidth;
-        s.IncCustomBank = loaded.Settings.IncCustomBank;
+        if (_doc.Tracks.Count == 0)
+        {
+            _doc.Tracks.Add(new Track("Track 1"));
+        }
+
+        _doc.ActiveTrackIndex = Math.Clamp(loaded.ActiveTrackIndex, 0, _doc.Tracks.Count - 1);
     }
 
     private void AfterDocumentLoaded()
     {
+        RefreshLayerList();
         LoadSettingsIntoControls();
+        LoadJoiningIntoControl();
         RefreshList();
         _selectedIndex = -1;
         if (_doc.Points.Count > 0)
@@ -966,13 +1085,396 @@ public sealed class MainForm : Form
         InvalidateAll();
         FrameAll();
         UpdatePreviewInfo();
+        UpdateIncrements();
+        UpdateMergeButton();
+    }
+
+    // ---------------------------------------------------------------- layers
+
+    private void RefreshLayerList()
+    {
+        _loading = true;
+        _lstLayers.BeginUpdate();
+        _lstLayers.Items.Clear();
+
+        foreach (Track track in _doc.Tracks)
+        {
+            _lstLayers.Items.Add(track.Name);
+        }
+
+        int activeIndex = _doc.ActiveTrackIndex;
+        if (activeIndex >= 0 && activeIndex < _lstLayers.Items.Count)
+        {
+            _lstLayers.SelectedIndex = activeIndex;
+        }
+        else if (_lstLayers.Items.Count > 0)
+        {
+            _lstLayers.SelectedIndex = 0;
+        }
+
+        _lstLayers.EndUpdate();
+        _loading = false;
+    }
+
+    private void OnLayerSelected(object sender, EventArgs e)
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        int layerIndex = _lstLayers.SelectedIndex;
+        if (layerIndex < 0 || layerIndex >= _doc.Tracks.Count)
+        {
+            return;
+        }
+
+        if (layerIndex == _doc.ActiveTrackIndex)
+        {
+            return;
+        }
+
+        _doc.ActiveTrackIndex = layerIndex;
+        ActivateLayer();
+    }
+
+    private void LoadJoiningIntoControl()
+    {
+        _loading = true;
+        _chkEnableJoining.Checked = _doc.ActiveTrack != null && _doc.ActiveTrack.EnableJoining;
+        _loading = false;
+    }
+
+    private void ApplyJoiningFromControl()
+    {
+        if (_loading || _doc.ActiveTrack == null)
+        {
+            return;
+        }
+
+        _undo.RecordSingle();
+        _doc.ActiveTrack.EnableJoining = _chkEnableJoining.Checked;
+        _doc.NotifyChanged();
+        UpdateUndoButtons();
+    }
+
+    private void ActivateLayer()
+    {
+        _selectedIndex = -1;
+        RefreshList();
+        LoadSettingsIntoControls();
+        LoadJoiningIntoControl();
+        LoadPointIntoEditors();
+
+        if (_doc.Points.Count > 0)
+        {
+            SelectPoint(0);
+        }
+
+        InvalidateAll();
+        UpdatePreviewInfo();
+        UpdateIncrements();
+        UpdateMergeButton();
+    }
+
+    private void AddLayer()
+    {
+        _undo.RecordSingle();
+
+        Track newTrack = new Track(NextTrackName());
+        _doc.Tracks.Add(newTrack);
+        _doc.ActiveTrackIndex = _doc.Tracks.Count - 1;
+
+        _doc.NotifyChanged();
+        RefreshLayerList();
+        ActivateLayer();
+        UpdateUndoButtons();
+    }
+
+    private void RemoveLayer()
+    {
+        int layerIndex = _doc.ActiveTrackIndex;
+        if (layerIndex < 0 || layerIndex >= _doc.Tracks.Count)
+        {
+            return;
+        }
+
+        _undo.RecordSingle();
+
+        if (_doc.Tracks.Count == 1)
+        {
+            // Never allow a zero-track document: clear the last layer instead.
+            _doc.Tracks[0].Points.Clear();
+        }
+        else
+        {
+            _doc.Tracks.RemoveAt(layerIndex);
+            if (_doc.ActiveTrackIndex >= _doc.Tracks.Count)
+            {
+                _doc.ActiveTrackIndex = _doc.Tracks.Count - 1;
+            }
+        }
+
+        _doc.NotifyChanged();
+        RefreshLayerList();
+        ActivateLayer();
+        UpdateUndoButtons();
+    }
+
+    private void MoveLayer(int direction)
+    {
+        int layerIndex = _doc.ActiveTrackIndex;
+        if (layerIndex < 0 || layerIndex >= _doc.Tracks.Count)
+        {
+            return;
+        }
+
+        int targetIndex = layerIndex + direction;
+        if (targetIndex < 0 || targetIndex >= _doc.Tracks.Count)
+        {
+            return;
+        }
+
+        _undo.RecordSingle();
+
+        Track movedTrack = _doc.Tracks[layerIndex];
+        _doc.Tracks[layerIndex] = _doc.Tracks[targetIndex];
+        _doc.Tracks[targetIndex] = movedTrack;
+        _doc.ActiveTrackIndex = targetIndex;
+
+        _doc.NotifyChanged();
+        RefreshLayerList();
+        UpdateUndoButtons();
+    }
+
+    private void RenameLayer()
+    {
+        int layerIndex = _doc.ActiveTrackIndex;
+        if (layerIndex < 0 || layerIndex >= _doc.Tracks.Count)
+        {
+            return;
+        }
+
+        string currentName = _doc.Tracks[layerIndex].Name;
+        string newName = PromptForText("Rename layer", "Layer name:", currentName);
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            return;
+        }
+
+        _undo.RecordSingle();
+        _doc.Tracks[layerIndex].Name = newName.Trim();
+        _doc.NotifyChanged();
+        RefreshLayerList();
+        UpdateUndoButtons();
+    }
+
+    private void DuplicateLayer()
+    {
+        int layerIndex = _doc.ActiveTrackIndex;
+        if (layerIndex < 0 || layerIndex >= _doc.Tracks.Count)
+        {
+            return;
+        }
+
+        Track sourceTrack = _doc.Tracks[layerIndex];
+        Track duplicateTrack = sourceTrack.Clone();
+        duplicateTrack.Name = NextUniqueTrackName(sourceTrack.Name + " copy", "Track copy");
+        duplicateTrack.EnableJoining = false;
+
+        _undo.RecordSingle();
+        _doc.Tracks.Insert(layerIndex + 1, duplicateTrack);
+        _doc.ActiveTrackIndex = layerIndex + 1;
+
+        _doc.NotifyChanged();
+        RefreshLayerList();
+        ActivateLayer();
+        UpdateUndoButtons();
+    }
+
+    private void MergeTracks()
+    {
+        Track activeTrack = _doc.ActiveTrack;
+        if (activeTrack == null)
+        {
+            return;
+        }
+
+        RoadChain joinedChain = FindChainContaining(activeTrack);
+        if (joinedChain == null || joinedChain.Spans.Count < 2)
+        {
+            return;
+        }
+
+        // Merge every track in the joined chain into one, named after the active
+        // track. The chain's point sequence is already deduplicated at junctions.
+        Track mergedTrack = new Track(activeTrack.Name)
+        {
+            EnableJoining = activeTrack.EnableJoining
+        };
+        mergedTrack.Settings = activeTrack.Settings.Clone();
+        foreach (RoadPoint point in joinedChain.Points)
+        {
+            mergedTrack.Points.Add(point.Clone());
+        }
+
+        HashSet<Track> chainTracks = new HashSet<Track>();
+        foreach (ChainSpan span in joinedChain.Spans)
+        {
+            chainTracks.Add(span.Track);
+        }
+
+        int insertIndex = _doc.Tracks.Count;
+        for (int index = 0; index < _doc.Tracks.Count; index++)
+        {
+            if (chainTracks.Contains(_doc.Tracks[index]) && index < insertIndex)
+            {
+                insertIndex = index;
+            }
+        }
+
+        _undo.RecordSingle();
+
+        _doc.Tracks.RemoveAll(track => chainTracks.Contains(track));
+        _doc.Tracks.Insert(insertIndex, mergedTrack);
+        _doc.ActiveTrackIndex = Math.Clamp(insertIndex, 0, _doc.Tracks.Count - 1);
+
+        _doc.NotifyChanged();
+        RefreshLayerList();
+        ActivateLayer();
+        UpdateUndoButtons();
+    }
+
+    private RoadChain FindChainContaining(Track track)
+    {
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            foreach (ChainSpan span in chain.Spans)
+            {
+                if (ReferenceEquals(span.Track, track))
+                {
+                    return chain;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private void UpdateMergeButton()
+    {
+        if (_btnMergeLayer == null)
+        {
+            return;
+        }
+
+        Track activeTrack = _doc.ActiveTrack;
+        RoadChain chain = activeTrack == null ? null : FindChainContaining(activeTrack);
+        _btnMergeLayer.Enabled = chain != null && chain.Spans.Count > 1;
+    }
+
+    private string NextTrackName()
+    {
+        int number = 1;
+        while (true)
+        {
+            string candidate = $"Track {number}";
+            if (!TrackNameInUse(candidate))
+            {
+                return candidate;
+            }
+
+            number++;
+        }
+    }
+
+    private string NextUniqueTrackName(string baseName, string fallback)
+    {
+        string cleanBase = string.IsNullOrWhiteSpace(baseName) ? fallback : baseName;
+        string candidate = cleanBase;
+        int number = 2;
+
+        while (TrackNameInUse(candidate))
+        {
+            candidate = $"{cleanBase} {number}";
+            number++;
+        }
+
+        return candidate;
+    }
+
+    private bool TrackNameInUse(string name)
+    {
+        foreach (Track track in _doc.Tracks)
+        {
+            if (track.Name == name)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private string PromptForText(string title, string prompt, string initialValue)
+    {
+        using Form dialog = new Form
+        {
+            Text = title,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            ClientSize = new Size(300, 110),
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false
+        };
+
+        Label promptLabel = new Label
+        {
+            Text = prompt,
+            Location = new Point(12, 12),
+            AutoSize = true
+        };
+
+        TextBox input = new TextBox
+        {
+            Text = initialValue,
+            Location = new Point(12, 34),
+            Width = 276
+        };
+
+        Button okButton = new Button
+        {
+            Text = "OK",
+            DialogResult = DialogResult.OK,
+            Location = new Point(126, 68),
+            Size = new Size(78, 26)
+        };
+
+        Button cancelButton = new Button
+        {
+            Text = "Cancel",
+            DialogResult = DialogResult.Cancel,
+            Location = new Point(210, 68),
+            Size = new Size(78, 26)
+        };
+
+        dialog.AcceptButton = okButton;
+        dialog.CancelButton = cancelButton;
+
+        dialog.Controls.Add(promptLabel);
+        dialog.Controls.Add(input);
+        dialog.Controls.Add(okButton);
+        dialog.Controls.Add(cancelButton);
+
+        return dialog.ShowDialog(this) == DialogResult.OK ? input.Text : null;
     }
 
     private void AddPoint()
     {
         _undo.RecordSingle();
         RoadPoint last = _doc.Points.Count > 0 ? _doc.Points[_doc.Points.Count - 1] : new RoadPoint(Vec3.Zero, 256, 0);
-        var p = new RoadPoint(last.Position + new Vec3(256, 0, 0), last.Width, last.BankDegrees);
+        RoadPoint p = new RoadPoint(last.Position + new Vec3(256, 0, 0), last.Width, last.BankDegrees, last.Thickness);
         _doc.Points.Add(p);
         _doc.NotifyChanged();
         RefreshList();
@@ -1131,11 +1633,15 @@ public sealed class MainForm : Form
         double dz = (double)_numZ.Value - _prevZ;
         bool widthChanged = (double)_numWidth.Value != _prevWidth;
         bool bankChanged = (double)_numBank.Value != _prevBank;
+        bool thicknessChanged = (double)_numPointThickness.Value != _prevThickness;
 
         foreach (int i in selected)
         {
             RoadPoint p = _doc.Points[i];
-            p.Position = new Vec3(p.Position.X + dx, p.Position.Y + dy, p.Position.Z + dz);
+            Vec3 oldPosition = p.Position;
+            Vec3 newPosition = new Vec3(p.Position.X + dx, p.Position.Y + dy, p.Position.Z + dz);
+            _doc.MovePointWelded(_doc.ActiveTrack, i, newPosition, oldPosition);
+
             if (widthChanged)
             {
                 p.Width = (double)_numWidth.Value;
@@ -1144,6 +1650,11 @@ public sealed class MainForm : Form
             if (bankChanged)
             {
                 p.BankDegrees = (double)_numBank.Value;
+            }
+
+            if (thicknessChanged)
+            {
+                p.Thickness = (double)_numPointThickness.Value;
             }
 
             UpdateListRow(i);
@@ -1171,6 +1682,7 @@ public sealed class MainForm : Form
         _prevZ = (double)_numZ.Value;
         _prevWidth = (double)_numWidth.Value;
         _prevBank = (double)_numBank.Value;
+        _prevThickness = (double)_numPointThickness.Value;
     }
 
     private void OnViewPointSelected(int index, bool additive)
@@ -1292,8 +1804,10 @@ public sealed class MainForm : Form
         // Preserve the selection across undo/redo.
         List<int> selection = SelectedIndices();
 
+        RefreshLayerList();
         _selectedIndex = -1;
         LoadSettingsIntoControls();
+        LoadJoiningIntoControl();
         RefreshList();
 
         // Re-select the same points. Out-of-range indices are ignored, which is
@@ -1302,6 +1816,7 @@ public sealed class MainForm : Form
 
         _doc.NotifyChanged();
         UpdateUndoButtons();
+        UpdateIncrements();
     }
 
     private void UpdateUndoButtons()
@@ -1337,7 +1852,6 @@ public sealed class MainForm : Form
         var s = _doc.Settings;
         s.Power = (int)_cboPower.SelectedItem;
         s.Material = _txtMaterial.Text;
-        s.Thickness = (double)_numThickness.Value;
         s.TextureScale = (double)_numTexScale.Value;
         s.LightmapScale = (int)_cboLightmap.SelectedItem;
         s.Snap = (int)_cboSnap.SelectedItem;
@@ -1359,6 +1873,7 @@ public sealed class MainForm : Form
             _numZ.Value = (decimal)p.Position.Z;
             _numWidth.Value = (decimal)p.Width;
             _numBank.Value = (decimal)p.BankDegrees;
+            _numPointThickness.Value = (decimal)p.Thickness;
         }
 
         CaptureEditorValues();
@@ -1371,7 +1886,6 @@ public sealed class MainForm : Form
         var s = _doc.Settings;
         _cboPower.SelectedIndex = Math.Max(0, Array.IndexOf(new object[] { 2, 3, 4 }, s.Power));
         _txtMaterial.Text = s.Material;
-        _numThickness.Value = (decimal)s.Thickness;
         _numTexScale.Value = (decimal)s.TextureScale;
         _cboLightmap.SelectedIndex = LightmapIndex(s.LightmapScale);
         _cboSnap.SelectedIndex = SnapIndex(s.Snap);
@@ -1558,6 +2072,7 @@ public sealed class MainForm : Form
         item.SubItems.Add(p.Position.Z.ToString("0.##"));
         item.SubItems.Add(p.Width.ToString("0.##"));
         item.SubItems.Add(p.BankDegrees.ToString("0.##"));
+        item.SubItems.Add(p.Thickness.ToString("0.##"));
         return item;
     }
 
@@ -1575,6 +2090,7 @@ public sealed class MainForm : Form
         item.SubItems[3].Text = p.Position.Z.ToString("0.##");
         item.SubItems[4].Text = p.Width.ToString("0.##");
         item.SubItems[5].Text = p.BankDegrees.ToString("0.##");
+        item.SubItems[6].Text = p.Thickness.ToString("0.##");
     }
 
     private void FrameAll()
@@ -1648,9 +2164,19 @@ public sealed class MainForm : Form
 
     private void Generate()
     {
-        if (_doc.Points.Count < 2)
+        bool anyTrackHasEnoughPoints = false;
+        foreach (Track track in _doc.Tracks)
         {
-            MessageBox.Show(this, "Add at least two control points first.", "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (track.Points.Count >= 2)
+            {
+                anyTrackHasEnoughPoints = true;
+                break;
+            }
+        }
+
+        if (!anyTrackHasEnoughPoints)
+        {
+            MessageBox.Show(this, "Add at least two control points to a track.", "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -1736,10 +2262,10 @@ public sealed class MainForm : Form
 
         // Set the distance first (validated against the current width), then the
         // min sizes (validated against the distance), then re-clamp the distance.
-        int distance = Math.Max(50, width - 380);
+        int distance = Math.Max(50, width - 460);
         _split.SplitterDistance = distance;
         _split.Panel1MinSize = Math.Min(380, _split.SplitterDistance);
-        _split.Panel2MinSize = Math.Min(280, width - _split.SplitterDistance);
+        _split.Panel2MinSize = Math.Min(360, width - _split.SplitterDistance);
 
         distance = Math.Max(_split.Panel1MinSize, _split.SplitterDistance);
         distance = Math.Min(distance, width - _split.Panel2MinSize);
