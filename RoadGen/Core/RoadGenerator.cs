@@ -75,8 +75,7 @@ public static class RoadGenerator
                 // "left wall" (column 0) is actually the outer face and vice versa.
                 SolidLeft = feature.LeftSide ? feature.SolidOuter : feature.SolidInner,
                 SolidRight = feature.LeftSide ? feature.SolidInner : feature.SolidOuter,
-                SolidBottom = feature.SolidBottom,
-                SolidTop = feature.SolidTop
+                SolidBottom = feature.SolidBottom
             };
 
             double sign = feature.LeftSide ? -1.0 : 1.0;

@@ -53,7 +53,6 @@ public sealed class MainForm : Form
     private readonly NumericUpDown _numFeatureIncBank = new NumericUpDown();
     private readonly ListView _lstFeaturePoints = new ListView();
     private readonly TextBox _txtFeatureMaterial = new TextBox();
-    private readonly CheckBox _chkFeatureTop = new CheckBox();
     private readonly CheckBox _chkFeatureBottom = new CheckBox();
     private readonly CheckBox _chkFeatureInner = new CheckBox();
     private readonly CheckBox _chkFeatureOuter = new CheckBox();
@@ -587,10 +586,6 @@ public sealed class MainForm : Form
             WrapContents = false
         };
 
-        _chkFeatureTop.Text = "Top";
-        _chkFeatureTop.AutoSize = true;
-        _chkFeatureTop.ForeColor = Color.LightGray;
-        _chkFeatureTop.Checked = true;
         _chkFeatureBottom.Text = "Bottom";
         _chkFeatureBottom.AutoSize = true;
         _chkFeatureBottom.ForeColor = Color.LightGray;
@@ -604,7 +599,6 @@ public sealed class MainForm : Form
         _chkFeatureOuter.ForeColor = Color.LightGray;
         _chkFeatureOuter.Checked = true;
 
-        featureFaceRow.Controls.Add(_chkFeatureTop);
         featureFaceRow.Controls.Add(_chkFeatureBottom);
         featureFaceRow.Controls.Add(_chkFeatureInner);
         featureFaceRow.Controls.Add(_chkFeatureOuter);
@@ -1082,7 +1076,6 @@ public sealed class MainForm : Form
         _numFeatureTopZ.ValueChanged += (s, e) => ApplyFeaturePointFromEditor();
         _numFeatureBank.ValueChanged += (s, e) => ApplyFeaturePointFromEditor();
         _txtFeatureMaterial.TextChanged += (s, e) => ApplyFeatureFromEditor();
-        _chkFeatureTop.CheckedChanged += (s, e) => ApplyFeatureFromEditor();
         _chkFeatureBottom.CheckedChanged += (s, e) => ApplyFeatureFromEditor();
         _chkFeatureInner.CheckedChanged += (s, e) => ApplyFeatureFromEditor();
         _chkFeatureOuter.CheckedChanged += (s, e) => ApplyFeatureFromEditor();
@@ -1107,7 +1100,6 @@ public sealed class MainForm : Form
         AttachUndoBatch(_numFeatureTopZ);
         AttachUndoBatch(_numFeatureBank);
         AttachUndoBatch(_txtFeatureMaterial);
-        AttachUndoBatch(_chkFeatureTop);
         AttachUndoBatch(_chkFeatureBottom);
         AttachUndoBatch(_chkFeatureInner);
         AttachUndoBatch(_chkFeatureOuter);
@@ -1523,7 +1515,6 @@ public sealed class MainForm : Form
             _numFeatureTopZ.Value = 0;
             _numFeatureBank.Value = 0;
             _txtFeatureMaterial.Text = string.Empty;
-            _chkFeatureTop.Checked = true;
             _chkFeatureBottom.Checked = true;
             _chkFeatureInner.Checked = true;
             _chkFeatureOuter.Checked = true;
@@ -1539,7 +1530,6 @@ public sealed class MainForm : Form
         _cboFeatureSide.SelectedIndex = feature.LeftSide ? 0 : 1;
         _numFeatureOffset.Value = (decimal)feature.Offset;
         _txtFeatureMaterial.Text = feature.Material;
-        _chkFeatureTop.Checked = feature.SolidTop;
         _chkFeatureBottom.Checked = feature.SolidBottom;
         _chkFeatureInner.Checked = feature.SolidInner;
         _chkFeatureOuter.Checked = feature.SolidOuter;
@@ -1621,19 +1611,9 @@ public sealed class MainForm : Form
         feature.LeftSide = _cboFeatureSide.SelectedIndex == 0;
         feature.Offset = (double)_numFeatureOffset.Value;
         feature.Material = _txtFeatureMaterial.Text;
-        feature.SolidTop = _chkFeatureTop.Checked;
         feature.SolidBottom = _chkFeatureBottom.Checked;
         feature.SolidInner = _chkFeatureInner.Checked;
         feature.SolidOuter = _chkFeatureOuter.Checked;
-
-        // Enforce at least one face enabled.
-        if (!feature.HasAnyFace)
-        {
-            _loading = true;
-            _chkFeatureTop.Checked = true;
-            feature.SolidTop = true;
-            _loading = false;
-        }
 
         _lstFeatures.Items[index] = FeatureSummary(feature);
         _doc.NotifyChanged();
@@ -1931,47 +1911,9 @@ public sealed class MainForm : Form
         }
 
         // Merge every track in the joined chain into one, named after the active
-        // track. The chain's point sequence is already deduplicated at junctions.
-        Track mergedTrack = new Track(activeTrack.Name)
-        {
-            EnableJoining = activeTrack.EnableJoining
-        };
-        mergedTrack.Settings = activeTrack.Settings.Clone();
-        foreach (RoadPoint point in joinedChain.Points)
-        {
-            mergedTrack.Points.Add(point.Clone());
-        }
-
-        // Rebuild the merged track's edge features from the chain so each sidewalk
-        // keeps its physical side (a start-to-start join flips one of them) and its
-        // width interpolates across the junction. Coverage is stored per point, so a
-        // strip that only spans part of the chain keeps its true extent.
-        foreach (ChainFeature chainFeature in joinedChain.CollectFeatures())
-        {
-            EdgeFeature mergedFeature = chainFeature.Feature.Clone();
-            mergedFeature.Points.Clear();
-            mergedFeature.Enabled.Clear();
-
-            int chainPointCount = joinedChain.Points.Count;
-            bool partialCoverage = chainFeature.StartPoint > 0 || chainFeature.EndPoint < chainPointCount;
-            EdgeFeaturePoint fallback = chainFeature.Points.Count > 0 ? chainFeature.Points[0] : new EdgeFeaturePoint();
-
-            for (int chainIndex = 0; chainIndex < chainPointCount; chainIndex++)
-            {
-                bool covered = chainIndex >= chainFeature.StartPoint && chainIndex < chainFeature.EndPoint;
-                EdgeFeaturePoint source = covered
-                    ? chainFeature.Points[chainIndex - chainFeature.StartPoint]
-                    : fallback;
-
-                mergedFeature.Points.Add(source.Clone());
-                if (partialCoverage)
-                {
-                    mergedFeature.Enabled.Add(covered);
-                }
-            }
-
-            mergedTrack.EdgeFeatures.Add(mergedFeature);
-        }
+        // track. The chain's point sequence is already deduplicated at junctions,
+        // and edge features are rebuilt so sidewalks keep their side and extent.
+        Track mergedTrack = _doc.MergeChain(joinedChain, activeTrack.Name, activeTrack.Settings, activeTrack.EnableJoining);
 
         HashSet<Track> chainTracks = new HashSet<Track>();
         foreach (ChainSpan span in joinedChain.Spans)

@@ -333,10 +333,7 @@ public sealed class Viewport3D : Control
                 int last = mesh.InnerTop.Count - 1;
                 bool strip = feature.Kind != EdgeFeatureKind.Guardrail;
 
-                if (feature.SolidTop)
-                {
-                    DrawPolylineRange(g, mesh.InnerTop, pen, 0, last);
-                }
+                DrawPolylineRange(g, mesh.InnerTop, pen, 0, last);
 
                 if (feature.SolidBottom || feature.SolidInner)
                 {
@@ -345,10 +342,7 @@ public sealed class Viewport3D : Control
 
                 if (strip)
                 {
-                    if (feature.SolidTop)
-                    {
-                        DrawPolylineRange(g, mesh.OuterTop, pen, 0, last);
-                    }
+                    DrawPolylineRange(g, mesh.OuterTop, pen, 0, last);
 
                     if (feature.SolidBottom || feature.SolidOuter)
                     {
@@ -358,7 +352,7 @@ public sealed class Viewport3D : Control
 
                 for (int i = 0; i < mesh.InnerTop.Count; i += 5)
                 {
-                    if (feature.SolidTop && strip)
+                    if (strip)
                     {
                         Draw3DLine(g, mesh.InnerTop[i], mesh.OuterTop[i], pen);
                     }

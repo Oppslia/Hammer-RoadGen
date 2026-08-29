@@ -64,13 +64,10 @@ public static class DisplacementSegment
         sb.Append("\t\t\"id\" \"").Append(solidId).Append("\"\r\n");
 
         // Face 1: top face with the displacement. V follows the road, U across.
-        // When the top is disabled (edge feature "Top" unchecked) the displacement
-        // stays but is textured nodraw, so the surface is invisible.
         Vec3 vTop = rowDir.Normalized();
         Vec3 uTop = (colDir - vTop * Vec3.Dot(colDir, vTop)).Normalized();
         double vShift = textureVStart - Vec3.Dot(vTop, A);
-        string topMaterial = s.SolidTop ? s.Material : "TOOLS/TOOLSNODRAW";
-        AppendSide(sb, 1, A, B, C, topMaterial, uTop, vTop, A, s.TextureScale, s.LightmapScale, leaveOpen: true, vShiftOverride: vShift);
+        AppendSide(sb, 1, A, B, C, s.Material, uTop, vTop, A, s.TextureScale, s.LightmapScale, leaveOpen: true, vShiftOverride: vShift);
         AppendDispInfo(sb, res, A, normals, distances, s.Power, Vec3.UnitZ);
         sb.Append("\t\t}\r\n");
 

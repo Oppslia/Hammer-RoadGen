@@ -76,7 +76,6 @@ public static class TrackFile
         public string Kind { get; set; } = "Sidewalk";
         public bool LeftSide { get; set; } = true;
         public double Offset { get; set; }
-        public bool SolidTop { get; set; } = true;
         public bool SolidBottom { get; set; } = true;
         public bool SolidInner { get; set; } = true;
         public bool SolidOuter { get; set; } = true;
@@ -187,7 +186,6 @@ public static class TrackFile
                     Kind = feature.Kind.ToString(),
                     LeftSide = feature.LeftSide,
                     Offset = feature.Offset,
-                    SolidTop = feature.SolidTop,
                     SolidBottom = feature.SolidBottom,
                     SolidInner = feature.SolidInner,
                     SolidOuter = feature.SolidOuter,
@@ -284,7 +282,6 @@ public static class TrackFile
                             Kind = ParseEdgeFeatureKind(featureData.Kind),
                             LeftSide = featureData.LeftSide,
                             Offset = featureData.Offset,
-                            SolidTop = featureData.SolidTop,
                             SolidBottom = featureData.SolidBottom,
                             SolidInner = featureData.SolidInner,
                             SolidOuter = featureData.SolidOuter,
@@ -313,10 +310,7 @@ public static class TrackFile
                             }
                         }
 
-                        if (feature.HasAnyFace)
-                        {
-                            track.EdgeFeatures.Add(feature);
-                        }
+                        track.EdgeFeatures.Add(feature);
                     }
                 }
 

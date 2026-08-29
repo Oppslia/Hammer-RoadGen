@@ -43,11 +43,6 @@ public sealed class RoadSettings
     /// <summary>Draw/export the bottom face.</summary>
     public bool SolidBottom = false;
 
-    /// <summary>Draw/export the top (displacement) face. The road keeps this on;
-    /// edge features (sidewalks/guardrails) can hide it to make an open
-    /// channel.</summary>
-    public bool SolidTop = true;
-
     /// <summary>Target length of each generated displacement segment. Smaller = smoother,
     /// larger = fewer displacements.</summary>
     public double SegmentLength = 256;
@@ -96,7 +91,6 @@ public sealed class RoadSettings
             SolidLeft = SolidLeft,
             SolidRight = SolidRight,
             SolidBottom = SolidBottom,
-            SolidTop = SolidTop,
             SegmentLength = SegmentLength,
             TextureScale = TextureScale,
             LightmapScale = LightmapScale,
@@ -153,7 +147,6 @@ public sealed class EdgeFeature
     /// <summary>Gap from the road edge, in units.</summary>
     public double Offset = 0;
 
-    public bool SolidTop = true;
     public bool SolidBottom = true;
     public bool SolidInner = true;
     public bool SolidOuter = true;
@@ -168,8 +161,6 @@ public sealed class EdgeFeature
     /// every point is covered. A merged track uses this to keep a sidewalk only
     /// along part of the road (e.g. after a start-to-start join).</summary>
     public readonly List<bool> Enabled = new List<bool>();
-
-    public bool HasAnyFace => SolidTop || SolidBottom || SolidInner || SolidOuter;
 
     /// <summary>True when a track point is part of this feature (or when no mask
     /// is set, in which case every point is covered).</summary>
@@ -236,7 +227,6 @@ public sealed class EdgeFeature
             Kind = Kind,
             LeftSide = LeftSide,
             Offset = Offset,
-            SolidTop = SolidTop,
             SolidBottom = SolidBottom,
             SolidInner = SolidInner,
             SolidOuter = SolidOuter,
@@ -425,6 +415,55 @@ public sealed class RoadDocument
         }
 
         return chains;
+    }
+
+    /// <summary>Merge every track in a chain into one track (the editor's "Merge"
+    /// button). The chain's point sequence is already deduplicated at junctions.
+    /// Edge features are rebuilt from the chain so each sidewalk keeps its physical
+    /// side, widths interpolate across junctions, and a strip that only spans part
+    /// of the chain (a start-to-start or end-to-end join) is stored with a per-point
+    /// coverage mask so it stops at the right place.</summary>
+    public Track MergeChain(RoadChain chain, string name, RoadSettings settings, bool enableJoining)
+    {
+        Track mergedTrack = new Track(name)
+        {
+            EnableJoining = enableJoining
+        };
+        mergedTrack.Settings = settings.Clone();
+
+        foreach (RoadPoint point in chain.Points)
+        {
+            mergedTrack.Points.Add(point.Clone());
+        }
+
+        foreach (ChainFeature chainFeature in chain.CollectFeatures())
+        {
+            EdgeFeature mergedFeature = chainFeature.Feature.Clone();
+            mergedFeature.Points.Clear();
+            mergedFeature.Enabled.Clear();
+
+            int chainPointCount = chain.Points.Count;
+            bool partialCoverage = chainFeature.StartPoint > 0 || chainFeature.EndPoint < chainPointCount;
+            EdgeFeaturePoint fallback = chainFeature.Points.Count > 0 ? chainFeature.Points[0] : new EdgeFeaturePoint();
+
+            for (int chainIndex = 0; chainIndex < chainPointCount; chainIndex++)
+            {
+                bool covered = chainIndex >= chainFeature.StartPoint && chainIndex < chainFeature.EndPoint;
+                EdgeFeaturePoint source = covered
+                    ? chainFeature.Points[chainIndex - chainFeature.StartPoint]
+                    : fallback;
+
+                mergedFeature.Points.Add(source.Clone());
+                if (partialCoverage)
+                {
+                    mergedFeature.Enabled.Add(covered);
+                }
+            }
+
+            mergedTrack.EdgeFeatures.Add(mergedFeature);
+        }
+
+        return mergedTrack;
     }
 
     private static RoadChain MergeChains(RoadChain first, RoadChain second)
@@ -637,11 +676,6 @@ public sealed class RoadChain
 
             foreach (EdgeFeature trackFeature in span.Track.EdgeFeatures)
             {
-                if (!trackFeature.HasAnyFace)
-                {
-                    continue;
-                }
-
                 bool effectiveLeft = trackFeature.LeftSide != span.Reversed;
                 List<EdgeFeaturePoint> spanPoints = BuildSpanFeaturePoints(span, trackFeature, out List<bool> spanEnabled);
                 if (spanPoints.Count == 0)
