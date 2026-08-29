@@ -48,6 +48,7 @@ public sealed class Viewport3D : Control
     public void SetDocument(RoadDocument doc) => _doc = doc;
 
     public bool ShowSegments;
+    public bool ShowFeatureSegments;
 
     /// <summary>Cancel any in-progress orbit/pan/click. The 3D view has no point
     /// drag, but this keeps the API consistent when points are deleted.</summary>
@@ -110,7 +111,9 @@ public sealed class Viewport3D : Control
         if (_doc != null)
         {
             DrawAllTracks(g);
+            DrawEdgeFeatures(g);
             DrawSegments(g);
+            DrawFeatureSegments(g);
             DrawInactivePoints(g);
             DrawPoints(g);
         }
@@ -298,6 +301,87 @@ public sealed class Viewport3D : Control
         }
     }
 
+    private void DrawEdgeFeatures(Graphics g)
+    {
+        if (_doc == null)
+        {
+            return;
+        }
+
+        Track activeTrack = _doc.ActiveTrack;
+        const int stepsPerSegment = 20;
+
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
+
+            bool isActive = chain.ContainsTrack(activeTrack);
+            using Pen pen = new Pen(isActive ? Color.FromArgb(155, 175, 255) : Color.FromArgb(92, 98, 114), isActive ? 1.6f : 1.0f);
+
+            foreach (ChainFeature chainFeature in chain.CollectFeatures())
+            {
+                EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, stepsPerSegment, chainFeature);
+                if (mesh.InnerTop.Count < 2)
+                {
+                    continue;
+                }
+
+                EdgeFeature feature = chainFeature.Feature;
+                int last = mesh.InnerTop.Count - 1;
+                bool strip = feature.Kind != EdgeFeatureKind.Guardrail;
+
+                if (feature.SolidTop)
+                {
+                    DrawPolylineRange(g, mesh.InnerTop, pen, 0, last);
+                }
+
+                if (feature.SolidBottom || feature.SolidInner)
+                {
+                    DrawPolylineRange(g, mesh.InnerBase, pen, 0, last);
+                }
+
+                if (strip)
+                {
+                    if (feature.SolidTop)
+                    {
+                        DrawPolylineRange(g, mesh.OuterTop, pen, 0, last);
+                    }
+
+                    if (feature.SolidBottom || feature.SolidOuter)
+                    {
+                        DrawPolylineRange(g, mesh.OuterBase, pen, 0, last);
+                    }
+                }
+
+                for (int i = 0; i < mesh.InnerTop.Count; i += 5)
+                {
+                    if (feature.SolidTop && strip)
+                    {
+                        Draw3DLine(g, mesh.InnerTop[i], mesh.OuterTop[i], pen);
+                    }
+
+                    if (feature.SolidBottom && strip)
+                    {
+                        Draw3DLine(g, mesh.InnerBase[i], mesh.OuterBase[i], pen);
+                    }
+
+                    if (feature.SolidInner)
+                    {
+                        Draw3DLine(g, mesh.InnerTop[i], mesh.InnerBase[i], pen);
+                    }
+
+                    if (feature.SolidOuter && strip)
+                    {
+                        Draw3DLine(g, mesh.OuterTop[i], mesh.OuterBase[i], pen);
+                    }
+                }
+            }
+        }
+    }
+
     private void DrawInactivePoints(Graphics g)
     {
         if (_doc == null)
@@ -360,6 +444,37 @@ public sealed class Viewport3D : Control
         }
     }
 
+    private void DrawFeatureSegments(Graphics g)
+    {
+        if (!ShowFeatureSegments || _doc == null)
+        {
+            return;
+        }
+
+        using Pen pen = new Pen(Color.FromArgb(80, 220, 255), 1.2f);
+
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
+
+            foreach (ChainFeature chainFeature in chain.CollectFeatures())
+            {
+                List<SegmentLayout.Segment> segments = SegmentLayout.ComputeFeatureSegments(chain.Points, chain.Settings, chainFeature);
+                foreach (SegmentLayout.Segment seg in segments)
+                {
+                    Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
+                    Draw3DLine(g, a, b, pen);
+                    Draw3DLine(g, b, c, pen);
+                    Draw3DLine(g, c, d, pen);
+                    Draw3DLine(g, d, a, pen);
+                }
+            }
+        }
+    }
+
     private void DrawPoints(Graphics g)
     {
         if (_doc == null)
@@ -367,7 +482,7 @@ public sealed class Viewport3D : Control
             return;
         }
 
-        var selected = new HashSet<int>(GetSelectedIndices());
+        HashSet<int> selected = new HashSet<int>(GetSelectedIndices());
         if (selected.Count == 0 && GetSelectedIndex() >= 0)
         {
             selected.Add(GetSelectedIndex());

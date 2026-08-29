@@ -218,4 +218,94 @@ public static class SegmentLayout
 
         return best;
     }
+
+    /// <summary>Subdivide one edge feature exactly like the exporter and return one
+    /// entry per displacement segment (the strip's top-face base parallelogram).
+    /// Uses the road's segment length, so the optimization follows the main road.</summary>
+    public static List<Segment> ComputeFeatureSegments(IReadOnlyList<RoadPoint> pts, RoadSettings s, ChainFeature chainFeature)
+    {
+        var result = new List<Segment>();
+        if (pts.Count < 2 || chainFeature == null || chainFeature.Points.Count == 0)
+        {
+            return result;
+        }
+
+        double maxSegment = Math.Max(1.0, s.SegmentLength);
+        var walker = new FrameWalker();
+        EdgeFeature feature = chainFeature.Feature;
+        double sign = feature.LeftSide ? -1.0 : 1.0;
+        Vec3 up = new Vec3(0, 0, 1);
+
+        int startPoint = Math.Clamp(chainFeature.StartPoint, 0, pts.Count - 1);
+        int endPoint = Math.Clamp(chainFeature.EndPoint, startPoint + 1, pts.Count);
+
+        for (int seg = 0; seg < pts.Count - 1; seg++)
+        {
+            double arcLength = RoadCurve.ArcLength(pts, seg);
+            int subdiv = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+
+            for (int k = 0; k < subdiv; k++)
+            {
+                double t0 = seg + (double)k / subdiv;
+                double t1 = seg + (double)(k + 1) / subdiv;
+
+                // Always advance the frame over the whole chain so the orientation
+                // here matches the road's (parallel transport accumulates).
+                RoadFrame frame0 = StepFrame(walker, pts, t0);
+                RoadFrame frame1 = StepFrame(walker, pts, t1);
+
+                if (t0 < startPoint - 1e-9 || t1 > endPoint - 1 + 1e-9)
+                {
+                    continue;
+                }
+
+                Vec3 inner0 = SampleInnerEdge(pts, t0, frame0, feature, sign, chainFeature, up);
+                Vec3 outer0 = SampleOuterEdge(pts, t0, frame0, feature, sign, chainFeature, up);
+                Vec3 inner1 = SampleInnerEdge(pts, t1, frame1, feature, sign, chainFeature, up);
+                Vec3 outer1 = SampleOuterEdge(pts, t1, frame1, feature, sign, chainFeature, up);
+
+                result.Add(new Segment
+                {
+                    A = inner0,
+                    B = inner1,
+                    C = outer1,
+                    D = inner0 + outer1 - inner1,
+                    T0 = t0,
+                    T1 = t1
+                });
+            }
+        }
+
+        return result;
+    }
+
+    private static RoadFrame StepFrame(FrameWalker walker, IReadOnlyList<RoadPoint> pts, double t)
+    {
+        Vec3 pos = RoadCurve.Position(pts, t);
+        Vec3 tan = RoadCurve.Tangent(pts, t);
+        double bank = RoadCurve.Bank(pts, t) * Math.PI / 180.0;
+        return walker.Step(pos, tan, bank);
+    }
+
+    private static Vec3 SampleInnerEdge(IReadOnlyList<RoadPoint> pts, double t, RoadFrame frame, EdgeFeature feature, double sign, ChainFeature chainFeature, Vec3 up)
+    {
+        Vec3 pos = RoadCurve.Position(pts, t);
+        double roadWidth = RoadCurve.Width(pts, t);
+        Vec3 edge = pos + frame.B * (sign * roadWidth / 2.0);
+        EdgeFeaturePoint point = chainFeature.PointAt(t);
+        double topOffset = point.TopOffset;
+        return edge + frame.B * (sign * feature.Offset) + up * topOffset;
+    }
+
+    private static Vec3 SampleOuterEdge(IReadOnlyList<RoadPoint> pts, double t, RoadFrame frame, EdgeFeature feature, double sign, ChainFeature chainFeature, Vec3 up)
+    {
+        Vec3 pos = RoadCurve.Position(pts, t);
+        double roadWidth = RoadCurve.Width(pts, t);
+        Vec3 edge = pos + frame.B * (sign * roadWidth / 2.0);
+        EdgeFeaturePoint point = chainFeature.PointAt(t);
+        double stripWidth = feature.Kind == EdgeFeatureKind.Guardrail ? 8.0 : Math.Max(0.5, point.Width);
+        double topOffset = point.TopOffset;
+        double cross = Math.Tan(point.BankDegrees * Math.PI / 180.0) * stripWidth;
+        return edge + frame.B * (sign * (feature.Offset + stripWidth)) + up * (topOffset + cross);
+    }
 }

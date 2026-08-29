@@ -43,6 +43,11 @@ public sealed class RoadSettings
     /// <summary>Draw/export the bottom face.</summary>
     public bool SolidBottom = false;
 
+    /// <summary>Draw/export the top (displacement) face. The road keeps this on;
+    /// edge features (sidewalks/guardrails) can hide it to make an open
+    /// channel.</summary>
+    public bool SolidTop = true;
+
     /// <summary>Target length of each generated displacement segment. Smaller = smoother,
     /// larger = fewer displacements.</summary>
     public double SegmentLength = 256;
@@ -91,6 +96,7 @@ public sealed class RoadSettings
             SolidLeft = SolidLeft,
             SolidRight = SolidRight,
             SolidBottom = SolidBottom,
+            SolidTop = SolidTop,
             SegmentLength = SegmentLength,
             TextureScale = TextureScale,
             LightmapScale = LightmapScale,
@@ -111,6 +117,146 @@ public sealed class RoadSettings
     }
 }
 
+/// <summary>The kind of geometry an edge feature generates along a road edge.</summary>
+public enum EdgeFeatureKind
+{
+    Sidewalk,
+    Guardrail
+}
+
+/// <summary>Per-control-point parameters for an edge feature, so its width,
+/// thickness and banking vary along the feature just like a road's.</summary>
+public sealed class EdgeFeaturePoint
+{
+    public double Width = 128;
+    public double BottomOffset = 0;
+    public double TopOffset = 64;
+    public double BankDegrees = 0;
+
+    public EdgeFeaturePoint Clone() => new EdgeFeaturePoint
+    {
+        Width = Width,
+        BottomOffset = BottomOffset,
+        TopOffset = TopOffset,
+        BankDegrees = BankDegrees
+    };
+}
+
+/// <summary>Extra geometry that rides along one outside edge of a track: a flat
+/// raised strip (sidewalk) or a thin barrier (guardrail). All four faces are
+/// optional, but at least one must stay enabled.</summary>
+public sealed class EdgeFeature
+{
+    public EdgeFeatureKind Kind = EdgeFeatureKind.Sidewalk;
+    public bool LeftSide = true;          // false = right side
+
+    /// <summary>Gap from the road edge, in units.</summary>
+    public double Offset = 0;
+
+    public bool SolidTop = true;
+    public bool SolidBottom = true;
+    public bool SolidInner = true;
+    public bool SolidOuter = true;
+
+    public string Material = "CONCRETE/CONCRETEFLOOR005A";
+
+    /// <summary>One entry per road control point (width, bottom/top Z, bank). Keep
+    /// in sync with the owning track's point count.</summary>
+    public readonly List<EdgeFeaturePoint> Points = new List<EdgeFeaturePoint>();
+
+    /// <summary>Optional per-point coverage mask, parallel to Points. Empty means
+    /// every point is covered. A merged track uses this to keep a sidewalk only
+    /// along part of the road (e.g. after a start-to-start join).</summary>
+    public readonly List<bool> Enabled = new List<bool>();
+
+    public bool HasAnyFace => SolidTop || SolidBottom || SolidInner || SolidOuter;
+
+    /// <summary>True when a track point is part of this feature (or when no mask
+    /// is set, in which case every point is covered).</summary>
+    public bool IsPointEnabled(int trackIndex)
+    {
+        if (Enabled.Count == 0)
+        {
+            return true;
+        }
+
+        return trackIndex >= 0 && trackIndex < Enabled.Count && Enabled[trackIndex];
+    }
+
+    public double WidthAt(double t) => SamplePoint(t).Width;
+
+    public double BottomOffsetAt(double t) => SamplePoint(t).BottomOffset;
+
+    public double TopOffsetAt(double t) => SamplePoint(t).TopOffset;
+
+    public double BankAt(double t) => SamplePoint(t).BankDegrees;
+
+    private EdgeFeaturePoint SamplePoint(double t)
+    {
+        int n = Points.Count;
+        if (n == 0)
+        {
+            return new EdgeFeaturePoint();
+        }
+
+        if (n == 1 || t <= 0)
+        {
+            return Points[0];
+        }
+
+        double maxT = n - 1;
+        if (t >= maxT)
+        {
+            return Points[n - 1];
+        }
+
+        int i = (int)Math.Floor(t);
+        if (i > n - 2)
+        {
+            i = n - 2;
+        }
+
+        double u = t - i;
+        EdgeFeaturePoint a = Points[i];
+        EdgeFeaturePoint b = Points[i + 1];
+
+        return new EdgeFeaturePoint
+        {
+            Width = a.Width + (b.Width - a.Width) * u,
+            BottomOffset = a.BottomOffset + (b.BottomOffset - a.BottomOffset) * u,
+            TopOffset = a.TopOffset + (b.TopOffset - a.TopOffset) * u,
+            BankDegrees = a.BankDegrees + (b.BankDegrees - a.BankDegrees) * u
+        };
+    }
+
+    public EdgeFeature Clone()
+    {
+        EdgeFeature copy = new EdgeFeature
+        {
+            Kind = Kind,
+            LeftSide = LeftSide,
+            Offset = Offset,
+            SolidTop = SolidTop,
+            SolidBottom = SolidBottom,
+            SolidInner = SolidInner,
+            SolidOuter = SolidOuter,
+            Material = Material
+        };
+
+        foreach (EdgeFeaturePoint point in Points)
+        {
+            copy.Points.Add(point.Clone());
+        }
+
+        foreach (bool enabled in Enabled)
+        {
+            copy.Enabled.Add(enabled);
+        }
+
+        return copy;
+    }
+}
+
 /// <summary>One named road (a "layer" in the UI): its control points plus its own
 /// road settings.</summary>
 public sealed class Track
@@ -118,6 +264,7 @@ public sealed class Track
     public string Name = "Track";
     public readonly List<RoadPoint> Points = new List<RoadPoint>();
     public RoadSettings Settings = new RoadSettings();
+    public readonly List<EdgeFeature> EdgeFeatures = new List<EdgeFeature>();
 
     /// <summary>When true, this track's endpoints weld/join with other tracks that
     /// share a point. Duplicated tracks default this to false so a copy starts
@@ -141,6 +288,11 @@ public sealed class Track
         foreach (RoadPoint point in Points)
         {
             copy.Points.Add(point.Clone());
+        }
+
+        foreach (EdgeFeature feature in EdgeFeatures)
+        {
+            copy.EdgeFeatures.Add(feature.Clone());
         }
 
         return copy;
@@ -239,7 +391,16 @@ public sealed class RoadDocument
 
             RoadChain chain = new RoadChain { Settings = track.Settings, Joinable = track.EnableJoining };
             chain.Points.AddRange(track.Points);
-            chain.Spans.Add(new ChainSpan { Track = track, StartPoint = 0, EndPoint = track.Points.Count });
+            chain.Spans.Add(new ChainSpan
+            {
+                Track = track,
+                StartPoint = 0,
+                EndPoint = track.Points.Count,
+                TrueStart = 0,
+                Reversed = false,
+                SourceStart = 0,
+                SourceEnd = track.Points.Count - 1
+            });
             chains.Add(chain);
         }
 
@@ -342,7 +503,7 @@ public sealed class RoadDocument
 
         foreach (ChainSpan span in source.Spans)
         {
-            int overlapStart = Math.Max(span.StartPoint, startIndex);
+            int overlapStart = Math.Max(span.TrueStart, startIndex);
             int overlapEnd = Math.Min(span.EndPoint, endIndex);
             if (overlapStart >= overlapEnd)
             {
@@ -362,7 +523,19 @@ public sealed class RoadDocument
                 newEnd = chainStart + (endIndex - overlapStart);
             }
 
-            chain.Spans.Add(new ChainSpan { Track = span.Track, StartPoint = newStart, EndPoint = newEnd });
+            int firstSourcePoint = forward ? overlapStart : overlapEnd - 1;
+            int lastSourcePoint = forward ? overlapEnd - 1 : overlapStart;
+
+            chain.Spans.Add(new ChainSpan
+            {
+                Track = span.Track,
+                StartPoint = newStart,
+                EndPoint = newEnd,
+                TrueStart = newStart,
+                Reversed = span.Reversed != !forward,
+                SourceStart = TrackPointIndexAt(source, span, firstSourcePoint),
+                SourceEnd = TrackPointIndexAt(source, span, lastSourcePoint)
+            });
         }
 
         // If this append skipped the source's shared boundary point (startIndex > 0
@@ -384,6 +557,18 @@ public sealed class RoadDocument
             }
         }
     }
+
+    /// <summary>Map a source chain point index to the track point index it came
+    /// from, following the span's traversal direction.</summary>
+    private static int TrackPointIndexAt(RoadChain source, ChainSpan span, int sourceChainPoint)
+    {
+        if (span.Reversed)
+        {
+            return span.SourceStart - (sourceChainPoint - span.TrueStart);
+        }
+
+        return span.SourceStart + (sourceChainPoint - span.TrueStart);
+    }
 }
 
 /// <summary>A sequence of control points assembled from one or more tracks whose
@@ -398,6 +583,199 @@ public sealed class RoadChain
     /// <summary>False when the chain contains a track with joining disabled, which
     /// keeps it from being merged into another road.</summary>
     public bool Joinable = true;
+
+    public bool ContainsTrack(Track track)
+    {
+        foreach (ChainSpan span in Spans)
+        {
+            if (ReferenceEquals(span.Track, track))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The edge features of every track in this chain, resolved to the
+    /// chain: per-point values are aligned to the chain's point order and the side
+    /// is flipped for spans that were reversed (start-to-start / end-to-end joins),
+    /// so a sidewalk stays on the same physical side of its track. A strip only
+    /// exists on tracks that actually have it — it stops at a track with no
+    /// matching feature.</summary>
+    public List<ChainFeature> CollectFeatures()
+    {
+        List<ChainFeature> features = new List<ChainFeature>();
+
+        // Strips still "open" at the end of the previous span, keyed by kind so a
+        // following span with the same (side, kind) can merge into them and
+        // interpolate smoothly across the junction.
+        Dictionary<EdgeFeatureKind, List<ChainFeature>> activeByKind = new Dictionary<EdgeFeatureKind, List<ChainFeature>>();
+
+        foreach (ChainSpan span in Spans)
+        {
+            // StartPoint is the coloring range, which may extend one point back to
+            // include the shared junction point. Features use the same range so the
+            // junction segment is covered by the track that owns it.
+            int spanStart = span.StartPoint;
+            int spanEnd = span.EndPoint;
+            if (spanEnd - spanStart < 1)
+            {
+                continue;
+            }
+
+            if (span.Track.EdgeFeatures.Count == 0)
+            {
+                // A track with no edge features breaks the strip: sidewalks do not
+                // extend onto it. Close the open strips so a later track's sidewalk
+                // starts fresh instead of continuing across this span.
+                activeByKind = new Dictionary<EdgeFeatureKind, List<ChainFeature>>();
+                continue;
+            }
+
+            Dictionary<EdgeFeatureKind, List<ChainFeature>> newActive = new Dictionary<EdgeFeatureKind, List<ChainFeature>>();
+
+            foreach (EdgeFeature trackFeature in span.Track.EdgeFeatures)
+            {
+                if (!trackFeature.HasAnyFace)
+                {
+                    continue;
+                }
+
+                bool effectiveLeft = trackFeature.LeftSide != span.Reversed;
+                List<EdgeFeaturePoint> spanPoints = BuildSpanFeaturePoints(span, trackFeature, out List<bool> spanEnabled);
+                if (spanPoints.Count == 0)
+                {
+                    continue;
+                }
+
+                // Split the span into contiguous enabled runs. A merged track may
+                // keep a sidewalk only along part of itself, and those runs become
+                // separate chain features so the strip stops where it's disabled.
+                int runStart = 0;
+                while (runStart < spanPoints.Count)
+                {
+                    if (!spanEnabled[runStart])
+                    {
+                        runStart++;
+                        continue;
+                    }
+
+                    int runEnd = runStart;
+                    while (runEnd < spanPoints.Count && spanEnabled[runEnd])
+                    {
+                        runEnd++;
+                    }
+
+                    int runChainStart = spanStart + runStart;
+                    int runChainEnd = spanStart + runEnd;
+                    List<EdgeFeaturePoint> runPoints = spanPoints.GetRange(runStart, runEnd - runStart);
+
+                    // Merge contiguous runs of the same (side, kind) into one feature
+                    // so width/thickness/bank interpolate smoothly across the junction,
+                    // just like a road's own control points. A run that starts on the
+                    // shared junction point overlaps the previous feature by one point.
+                    ChainFeature mergeTarget = null;
+                    if (activeByKind.TryGetValue(trackFeature.Kind, out List<ChainFeature> activeList))
+                    {
+                        foreach (ChainFeature existing in activeList)
+                        {
+                            if (existing.Feature.LeftSide != effectiveLeft)
+                            {
+                                continue;
+                            }
+
+                            if (existing.EndPoint == runChainStart || existing.EndPoint == runChainStart + 1)
+                            {
+                                mergeTarget = existing;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (mergeTarget != null)
+                    {
+                        int skipFirst = mergeTarget.EndPoint == runChainStart + 1 ? 1 : 0;
+                        mergeTarget.EndPoint = runChainEnd;
+                        for (int index = skipFirst; index < runPoints.Count; index++)
+                        {
+                            mergeTarget.Points.Add(runPoints[index]);
+                        }
+                    }
+                    else
+                    {
+                        EdgeFeature template = trackFeature.Clone();
+                        template.LeftSide = effectiveLeft;
+                        template.Points.Clear();
+                        template.Enabled.Clear();
+                        mergeTarget = new ChainFeature
+                        {
+                            Feature = template,
+                            StartPoint = runChainStart,
+                            EndPoint = runChainEnd,
+                            Points = runPoints
+                        };
+                        features.Add(mergeTarget);
+                    }
+
+                    if (!newActive.TryGetValue(trackFeature.Kind, out List<ChainFeature> kindList))
+                    {
+                        kindList = new List<ChainFeature>();
+                        newActive[trackFeature.Kind] = kindList;
+                    }
+
+                    kindList.Add(mergeTarget);
+                    runStart = runEnd;
+                }
+            }
+
+            activeByKind = newActive;
+        }
+
+        return features;
+    }
+
+    private static List<EdgeFeaturePoint> BuildSpanFeaturePoints(ChainSpan span, EdgeFeature feature, out List<bool> enabled)
+    {
+        int count = span.EndPoint - span.StartPoint;
+        List<EdgeFeaturePoint> points = new List<EdgeFeaturePoint>(count);
+        enabled = new List<bool>(count);
+
+        for (int offset = 0; offset < count; offset++)
+        {
+            int chainIndex = span.StartPoint + offset;
+            int trackIndex = TrackIndexForChainOffset(span, chainIndex);
+            points.Add(FeaturePointAt(feature, trackIndex).Clone());
+            enabled.Add(feature.IsPointEnabled(trackIndex));
+        }
+
+        return points;
+    }
+
+    /// <summary>Map a chain point index to the track point index it came from. The
+    /// one point before a span's true start is the shared junction point that the
+    /// coloring range borrowed from the track's skipped endpoint.</summary>
+    private static int TrackIndexForChainOffset(ChainSpan span, int chainIndex)
+    {
+        int offsetFromTrueStart = chainIndex - span.TrueStart;
+        if (offsetFromTrueStart < 0)
+        {
+            return span.Reversed ? span.SourceStart + 1 : span.SourceStart - 1;
+        }
+
+        return span.Reversed ? span.SourceStart - offsetFromTrueStart : span.SourceStart + offsetFromTrueStart;
+    }
+
+    private static EdgeFeaturePoint FeaturePointAt(EdgeFeature feature, int trackIndex)
+    {
+        if (feature.Points.Count == 0)
+        {
+            return new EdgeFeaturePoint();
+        }
+
+        int clamped = Math.Clamp(trackIndex, 0, feature.Points.Count - 1);
+        return feature.Points[clamped];
+    }
 }
 
 /// <summary>The range of a chain's control points that came from one track. Used
@@ -406,6 +784,76 @@ public sealed class RoadChain
 public sealed class ChainSpan
 {
     public Track Track;
+
+    /// <summary>Chain point range used for rendering/coloring. The start may be
+    /// extended back one point so the boundary segment shares the appended track's
+    /// color.</summary>
     public int StartPoint;
     public int EndPoint;
+
+    /// <summary>Chain index where this span's own points actually begin (before any
+    /// coloring extension). Feature point mapping uses this range.</summary>
+    public int TrueStart;
+
+    /// <summary>True when this span's track points were reversed while assembling
+    /// the chain (start-to-start or end-to-end joins).</summary>
+    public bool Reversed;
+
+    /// <summary>Track point index of the span's first chain point (TrueStart).</summary>
+    public int SourceStart;
+
+    /// <summary>Track point index of the span's last chain point (EndPoint - 1).</summary>
+    public int SourceEnd;
+}
+
+/// <summary>An edge feature resolved to a chain: the template feature (side already
+/// flipped for reversed spans) plus per-point values aligned to the chain point
+/// range [StartPoint, EndPoint).</summary>
+public sealed class ChainFeature
+{
+    public EdgeFeature Feature;
+    public int StartPoint;
+    public int EndPoint;
+    public List<EdgeFeaturePoint> Points = new List<EdgeFeaturePoint>();
+
+    /// <summary>Linearly interpolated feature values at a chain parameter t
+    /// (t runs over the whole chain; [StartPoint, EndPoint) is this feature's
+    /// coverage). Matches the road's own width/bank/thickness interpolation.</summary>
+    public EdgeFeaturePoint PointAt(double t)
+    {
+        double localT = t - StartPoint;
+        int n = Points.Count;
+        if (n == 0)
+        {
+            return new EdgeFeaturePoint();
+        }
+
+        if (n == 1 || localT <= 0)
+        {
+            return Points[0];
+        }
+
+        if (localT >= n - 1)
+        {
+            return Points[n - 1];
+        }
+
+        int index = (int)Math.Floor(localT);
+        if (index > n - 2)
+        {
+            index = n - 2;
+        }
+
+        double u = localT - index;
+        EdgeFeaturePoint first = Points[index];
+        EdgeFeaturePoint second = Points[index + 1];
+
+        return new EdgeFeaturePoint
+        {
+            Width = first.Width + (second.Width - first.Width) * u,
+            BottomOffset = first.BottomOffset + (second.BottomOffset - first.BottomOffset) * u,
+            TopOffset = first.TopOffset + (second.TopOffset - first.TopOffset) * u,
+            BankDegrees = first.BankDegrees + (second.BankDegrees - first.BankDegrees) * u
+        };
+    }
 }

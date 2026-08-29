@@ -79,6 +79,7 @@ public sealed class Viewport2D : Control
     public void SetDocument(RoadDocument doc) => _doc = doc;
 
     public bool ShowSegments;
+    public bool ShowFeatureSegments;
 
     public void SetPlane(PlaneKind plane)
     {
@@ -188,7 +189,9 @@ public sealed class Viewport2D : Control
         }
 
         DrawAllTracks(g);
+        DrawEdgeFeatures(g);
         DrawSegments(g);
+        DrawFeatureSegments(g);
         DrawInactivePoints(g);
         DrawPoints(g);
         DrawHint(g);
@@ -476,6 +479,87 @@ public sealed class Viewport2D : Control
         }
     }
 
+    private void DrawEdgeFeatures(Graphics g)
+    {
+        if (_doc == null)
+        {
+            return;
+        }
+
+        Track activeTrack = _doc.ActiveTrack;
+        const int stepsPerSegment = 24;
+
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
+
+            bool isActive = chain.ContainsTrack(activeTrack);
+            using Pen pen = new Pen(isActive ? Color.FromArgb(155, 175, 255) : Color.FromArgb(92, 98, 114), isActive ? 2.0f : 1.4f);
+
+            foreach (ChainFeature chainFeature in chain.CollectFeatures())
+            {
+                EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, stepsPerSegment, chainFeature);
+                if (mesh.InnerTop.Count < 2)
+                {
+                    continue;
+                }
+
+                EdgeFeature feature = chainFeature.Feature;
+                int last = mesh.InnerTop.Count - 1;
+                bool strip = feature.Kind != EdgeFeatureKind.Guardrail;
+
+                if (feature.SolidTop)
+                {
+                    DrawPolylineRange(g, mesh.InnerTop, pen, 0, last);
+                }
+
+                if (feature.SolidBottom || feature.SolidInner)
+                {
+                    DrawPolylineRange(g, mesh.InnerBase, pen, 0, last);
+                }
+
+                if (strip)
+                {
+                    if (feature.SolidTop)
+                    {
+                        DrawPolylineRange(g, mesh.OuterTop, pen, 0, last);
+                    }
+
+                    if (feature.SolidBottom || feature.SolidOuter)
+                    {
+                        DrawPolylineRange(g, mesh.OuterBase, pen, 0, last);
+                    }
+                }
+
+                for (int i = 0; i < mesh.InnerTop.Count; i += 4)
+                {
+                    if (feature.SolidTop && strip)
+                    {
+                        g.DrawLine(pen, WorldToScreenF(mesh.InnerTop[i]), WorldToScreenF(mesh.OuterTop[i]));
+                    }
+
+                    if (feature.SolidBottom && strip)
+                    {
+                        g.DrawLine(pen, WorldToScreenF(mesh.InnerBase[i]), WorldToScreenF(mesh.OuterBase[i]));
+                    }
+
+                    if (feature.SolidInner)
+                    {
+                        g.DrawLine(pen, WorldToScreenF(mesh.InnerTop[i]), WorldToScreenF(mesh.InnerBase[i]));
+                    }
+
+                    if (feature.SolidOuter && strip)
+                    {
+                        g.DrawLine(pen, WorldToScreenF(mesh.OuterTop[i]), WorldToScreenF(mesh.OuterBase[i]));
+                    }
+                }
+            }
+        }
+    }
+
     private void DrawInactivePoints(Graphics g)
     {
         if (_doc == null)
@@ -532,6 +616,37 @@ public sealed class Viewport2D : Control
             g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(b2));
             g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(c2));
             g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(d2));
+        }
+    }
+
+    private void DrawFeatureSegments(Graphics g)
+    {
+        if (!ShowFeatureSegments || _doc == null)
+        {
+            return;
+        }
+
+        using Pen pen = new Pen(Color.FromArgb(80, 220, 255), 1.1f);
+
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
+
+            foreach (ChainFeature chainFeature in chain.CollectFeatures())
+            {
+                List<SegmentLayout.Segment> segments = SegmentLayout.ComputeFeatureSegments(chain.Points, chain.Settings, chainFeature);
+                foreach (SegmentLayout.Segment seg in segments)
+                {
+                    Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
+                    g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(b));
+                    g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(c));
+                    g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(d));
+                    g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(a));
+                }
+            }
         }
     }
 

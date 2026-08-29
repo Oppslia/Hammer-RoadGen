@@ -33,15 +33,18 @@ namespace RoadGen.Core;
 public static class TrackFile
 {
     /// <summary>The version this build writes to disk. Bump whenever the format changes.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 6;
 
     /// <summary>One entry per historical version gap. Index 0 migrates v1->v2,
     /// index 1 migrates v2->v3, and so on.</summary>
     private static readonly Action<JsonObject>[] Migrations =
     {
         Migrate1To2,
-        Migrate2To3
-        // Migrate3To4, ... append future migrations here.
+        Migrate2To3,
+        Migrate3To4,
+        Migrate4To5,
+        Migrate5To6
+        // Migrate6To7, ... append future migrations here.
     };
 
     public sealed class TrackLoadResult
@@ -65,6 +68,31 @@ public static class TrackFile
         public bool? EnableJoining { get; set; }
         public SettingsData Settings { get; set; } = new SettingsData();
         public List<PointData> Points { get; set; } = new List<PointData>();
+        public List<EdgeFeatureData> EdgeFeatures { get; set; } = new List<EdgeFeatureData>();
+    }
+
+    private sealed class EdgeFeatureData
+    {
+        public string Kind { get; set; } = "Sidewalk";
+        public bool LeftSide { get; set; } = true;
+        public double Offset { get; set; }
+        public bool SolidTop { get; set; } = true;
+        public bool SolidBottom { get; set; } = true;
+        public bool SolidInner { get; set; } = true;
+        public bool SolidOuter { get; set; } = true;
+        public string Material { get; set; } = "CONCRETE/CONCRETEFLOOR005A";
+        public List<EdgeFeaturePointData> Points { get; set; } = new List<EdgeFeaturePointData>();
+        // Null when every point is covered (files saved before per-point coverage
+        // existed load as full coverage).
+        public List<bool> Enabled { get; set; } = new List<bool>();
+    }
+
+    private sealed class EdgeFeaturePointData
+    {
+        public double Width { get; set; } = 128;
+        public double BottomOffset { get; set; }
+        public double TopOffset { get; set; } = 64;
+        public double Bank { get; set; }
     }
 
     private sealed class SettingsData
@@ -152,6 +180,43 @@ public static class TrackFile
                 });
             }
 
+            foreach (EdgeFeature feature in track.EdgeFeatures)
+            {
+                EdgeFeatureData featureData = new EdgeFeatureData
+                {
+                    Kind = feature.Kind.ToString(),
+                    LeftSide = feature.LeftSide,
+                    Offset = feature.Offset,
+                    SolidTop = feature.SolidTop,
+                    SolidBottom = feature.SolidBottom,
+                    SolidInner = feature.SolidInner,
+                    SolidOuter = feature.SolidOuter,
+                    Material = feature.Material
+                };
+
+                foreach (EdgeFeaturePoint point in feature.Points)
+                {
+                    featureData.Points.Add(new EdgeFeaturePointData
+                    {
+                        Width = point.Width,
+                        BottomOffset = point.BottomOffset,
+                        TopOffset = point.TopOffset,
+                        Bank = point.BankDegrees
+                    });
+                }
+
+                if (feature.Enabled.Count > 0)
+                {
+                    featureData.Enabled = new List<bool>(feature.Enabled);
+                }
+                else
+                {
+                    featureData.Enabled = null;
+                }
+
+                trackItem.EdgeFeatures.Add(featureData);
+            }
+
             data.Tracks.Add(trackItem);
         }
 
@@ -210,6 +275,51 @@ public static class TrackFile
                     }
                 }
 
+                if (trackItem.EdgeFeatures != null)
+                {
+                    foreach (EdgeFeatureData featureData in trackItem.EdgeFeatures)
+                    {
+                        EdgeFeature feature = new EdgeFeature
+                        {
+                            Kind = ParseEdgeFeatureKind(featureData.Kind),
+                            LeftSide = featureData.LeftSide,
+                            Offset = featureData.Offset,
+                            SolidTop = featureData.SolidTop,
+                            SolidBottom = featureData.SolidBottom,
+                            SolidInner = featureData.SolidInner,
+                            SolidOuter = featureData.SolidOuter,
+                            Material = string.IsNullOrWhiteSpace(featureData.Material) ? "CONCRETE/CONCRETEFLOOR005A" : featureData.Material
+                        };
+
+                        if (featureData.Points != null)
+                        {
+                            foreach (EdgeFeaturePointData pointData in featureData.Points)
+                            {
+                                feature.Points.Add(new EdgeFeaturePoint
+                                {
+                                    Width = pointData.Width,
+                                    BottomOffset = pointData.BottomOffset,
+                                    TopOffset = pointData.TopOffset,
+                                    BankDegrees = pointData.Bank
+                                });
+                            }
+                        }
+
+                        if (featureData.Enabled != null)
+                        {
+                            foreach (bool enabled in featureData.Enabled)
+                            {
+                                feature.Enabled.Add(enabled);
+                            }
+                        }
+
+                        if (feature.HasAnyFace)
+                        {
+                            track.EdgeFeatures.Add(feature);
+                        }
+                    }
+                }
+
                 document.Tracks.Add(track);
             }
         }
@@ -249,6 +359,16 @@ public static class TrackFile
         settings.IncCustomZ = data.IncCustomZ;
         settings.IncCustomWidth = data.IncCustomWidth;
         settings.IncCustomBank = data.IncCustomBank;
+    }
+
+    private static EdgeFeatureKind ParseEdgeFeatureKind(string value)
+    {
+        if (Enum.TryParse<EdgeFeatureKind>(value, out EdgeFeatureKind kind))
+        {
+            return kind;
+        }
+
+        return EdgeFeatureKind.Sidewalk;
     }
 
     /// <summary>v1 -> v2: adds the fields introduced with Solid Roads and the
@@ -308,5 +428,74 @@ public static class TrackFile
         root["Tracks"] = new JsonArray(track);
         root.Remove("Settings");
         root.Remove("Points");
+    }
+
+    /// <summary>v3 -> v4: adds optional per-track edge features. Nothing to migrate —
+    /// old tracks simply have an empty EdgeFeatures list.</summary>
+    private static void Migrate3To4(JsonObject root)
+    {
+        // Edge features are a new optional field; no structural change is needed.
+    }
+
+    /// <summary>v4 -> v5: edge feature width/thickness/bank become per-control-point
+    /// values. The old scalar Width/BottomOffset/TopOffset are expanded into a Points
+    /// list with one entry per road control point (bank defaults to 0).</summary>
+    private static void Migrate4To5(JsonObject root)
+    {
+        if (root["Tracks"] is not JsonArray tracks)
+        {
+            return;
+        }
+
+        foreach (JsonNode trackNode in tracks)
+        {
+            if (trackNode is not JsonObject track)
+            {
+                continue;
+            }
+
+            int roadPointCount = track["Points"] is JsonArray roadPoints ? roadPoints.Count : 0;
+            if (track["EdgeFeatures"] is not JsonArray edgeFeatures)
+            {
+                continue;
+            }
+
+            foreach (JsonNode featureNode in edgeFeatures)
+            {
+                if (featureNode is not JsonObject feature || feature["Points"] != null)
+                {
+                    continue;
+                }
+
+                double width = feature["Width"]?.GetValue<double>() ?? 128.0;
+                double bottomOffset = feature["BottomOffset"]?.GetValue<double>() ?? 0.0;
+                double topOffset = feature["TopOffset"]?.GetValue<double>() ?? 64.0;
+
+                JsonArray points = new JsonArray();
+                for (int pointIndex = 0; pointIndex < roadPointCount; pointIndex++)
+                {
+                    points.Add(new JsonObject
+                    {
+                        ["Width"] = width,
+                        ["BottomOffset"] = bottomOffset,
+                        ["TopOffset"] = topOffset,
+                        ["Bank"] = 0.0
+                    });
+                }
+
+                feature["Points"] = points;
+                feature.Remove("Width");
+                feature.Remove("BottomOffset");
+                feature.Remove("TopOffset");
+            }
+        }
+    }
+
+    /// <summary>v5 -> v6: adds an optional per-point coverage mask to edge features.
+    /// Nothing to migrate — an absent mask means full coverage, which matches the old
+    /// behaviour exactly.</summary>
+    private static void Migrate5To6(JsonObject root)
+    {
+        // Enabled is a new optional field; no structural change is needed.
     }
 }
