@@ -1451,7 +1451,7 @@ public sealed partial class MainWindow : Form
         for (int pointIndex = 0; pointIndex < feature.Points.Count; pointIndex++)
         {
             EdgeFeaturePoint point = feature.Points[pointIndex];
-            ListViewItem row = new ListViewItem((pointIndex + 1).ToString());
+            ListViewItem row = new ListViewItem(pointIndex.ToString());
             row.SubItems.Add(point.Width.ToString("0.##"));
             row.SubItems.Add(point.BottomOffset.ToString("0.##"));
             row.SubItems.Add(point.TopOffset.ToString("0.##"));
@@ -2488,6 +2488,33 @@ public sealed partial class MainWindow : Form
 
         CaptureEditorValues();
         _loading = false;
+        SyncFeaturePointSelection();
+    }
+
+    /// <summary>Mirror the selected control points onto the open feature's point
+    /// table, so picking a track point also highlights the matching sidewalk point
+    /// and loads its values into the feature editor. Feature points are indexed the
+    /// same as track control points, so row i maps straight to track point i.</summary>
+    private void SyncFeaturePointSelection()
+    {
+        if (_lstFeaturePoints == null || _doc.ActiveTrack == null)
+        {
+            return;
+        }
+
+        List<int> selected = SelectedIndices();
+        _loading = true;
+        _lstFeaturePoints.SelectedIndices.Clear();
+        foreach (int index in selected)
+        {
+            if (index >= 0 && index < _lstFeaturePoints.Items.Count)
+            {
+                _lstFeaturePoints.SelectedIndices.Add(index);
+            }
+        }
+
+        _loading = false;
+        LoadFeaturePointIntoEditors();
     }
 
     private void LoadSettingsIntoControls()
