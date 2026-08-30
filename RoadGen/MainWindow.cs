@@ -203,6 +203,12 @@ public sealed partial class MainWindow : Form
         _gridCombo.Items.AddRange(new object[] { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 });
         _gridCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _gridCombo.SelectedIndex = 6; // 64
+        // Toolstrip items auto-size by default, which overrides a direct Width set.
+        // Disable AutoSize, then the closed combo can be narrow (just fits "1024" +
+        // the arrow) while DropDownWidth keeps the expanded list wide enough.
+        _gridCombo.AutoSize = false;
+        _gridCombo.Width = 60;
+        _gridCombo.DropDownWidth = 90;
         topActionBar.Items.Add(new ToolStripLabel("Grid:"));
         topActionBar.Items.Add(_gridCombo);
 
@@ -624,10 +630,10 @@ public sealed partial class MainWindow : Form
         _chkFeatureOuter.ForeColor = Color.LightGray;
         _chkFeatureOuter.Checked = true;
 
-        featureFaceToggleRow.Controls.Add(_chkFeatureBottom);
         featureFaceToggleRow.Controls.Add(_chkFeatureInner);
         featureFaceToggleRow.Controls.Add(_chkFeatureOuter);
-
+        featureFaceToggleRow.Controls.Add(_chkFeatureBottom);
+        
         TableLayoutPanel featureInputs = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
