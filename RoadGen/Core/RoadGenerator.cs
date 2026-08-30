@@ -61,6 +61,7 @@ public static class RoadGenerator
         int resolution = 1 << power;
         double maxSegment = Math.Max(1.0, chain.Settings.SegmentLength);
         Vec3 up = new Vec3(0, 0, 1);
+        double twist = ClosedLoopTwistOf(chain);
 
         foreach (ChainFeature chainFeature in features)
         {
@@ -84,7 +85,7 @@ public static class RoadGenerator
 
             for (int segmentIndex = 0; segmentIndex < chain.Points.Count - 1; segmentIndex++)
             {
-                double arcLength = RoadCurve.ArcLength(chain.Points, segmentIndex);
+                double arcLength = RoadCurve.ArcLength(chain.Points, segmentIndex, chain.Closed);
                 int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
 
                 for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
@@ -95,7 +96,7 @@ public static class RoadGenerator
                     // Always sample so the frame walker advances over the whole chain
                     // (matching the road's frame). Pieces outside this feature's range
                     // are walked but not written.
-                    Vec3[,] grid = SampleEdgeGrid(chain.Points, t0, t1, resolution, walker, feature, sign, chainFeature, up);
+                    Vec3[,] grid = SampleEdgeGrid(chain.Points, t0, t1, resolution, walker, feature, sign, chainFeature, up, chain.Closed, twist);
 
                     if (t0 < chainFeature.StartPoint - 1e-9 || t1 > chainFeature.EndPoint - 1 + 1e-9)
                     {
@@ -120,19 +121,29 @@ public static class RoadGenerator
         EdgeFeature feature,
         double sign,
         ChainFeature chainFeature,
-        Vec3 up)
+        Vec3 up,
+        bool closed = false,
+        double twist = 0)
     {
         int n = resolution + 1;
         Vec3[,] grid = new Vec3[n, n];
+        double maxT = Math.Max(1.0, points.Count - 1);
 
         for (int row = 0; row < n; row++)
         {
             double t = t0 + (t1 - t0) * row / resolution;
-            Vec3 pos = RoadCurve.Position(points, t);
-            Vec3 tan = RoadCurve.Tangent(points, t);
-            double roadWidth = RoadCurve.Width(points, t);
-            double bank = RoadCurve.Bank(points, t) * Math.PI / 180.0;
+            Vec3 pos = RoadCurve.Position(points, t, closed);
+            Vec3 tan = RoadCurve.Tangent(points, t, closed);
+            double roadWidth = RoadCurve.Width(points, t, closed);
+            double bank = RoadCurve.Bank(points, t, closed) * Math.PI / 180.0;
             RoadFrame frame = walker.Step(pos, tan, bank);
+
+            // A closed loop's frame must be twist-corrected identically to the road
+            // surface, otherwise the sidewalk decouples from the road edge.
+            if (twist != 0)
+            {
+                frame = RoadSurface.TwistCorrected(frame, t / maxT, twist);
+            }
 
             EdgeFeaturePoint point = FeaturePointAt(chainFeature, t);
             double stripWidth = feature.Kind == EdgeFeatureKind.Guardrail ? 8.0 : Math.Max(0.5, point.Width);
@@ -214,6 +225,7 @@ public static class RoadGenerator
 
         double textureV = 0;
         FrameWalker walker = new FrameWalker();
+        double twist = ClosedLoopTwistOf(chain);
 
         for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
         {
@@ -222,20 +234,54 @@ public static class RoadGenerator
             int resolution = 1 << power;
             double maxSegment = Math.Max(1.0, settings.SegmentLength);
 
-            double arcLength = RoadCurve.ArcLength(points, segmentIndex);
+            double arcLength = RoadCurve.ArcLength(points, segmentIndex, chain.Closed);
             int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
 
             for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
             {
                 double startT = segmentIndex + (double)pieceIndex / subdivision;
                 double endT = segmentIndex + (double)(pieceIndex + 1) / subdivision;
-                Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker);
-                double thicknessStart = RoadCurve.Thickness(points, startT);
-                double thicknessEnd = RoadCurve.Thickness(points, endT);
+                Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker, chain.Closed, twist);
+                double thicknessStart = RoadCurve.Thickness(points, startT, chain.Closed);
+                double thicknessEnd = RoadCurve.Thickness(points, endT, chain.Closed);
                 output.Append(DisplacementSegment.Build(solidId++, grid, thicknessStart, thicknessEnd, settings, textureV, out double textureAdvance));
                 textureV += textureAdvance;
             }
         }
+    }
+
+    /// <summary>Measure the twist a closed loop accumulates across the seam so the
+    /// exported cross-section returns to its starting orientation (matches the
+    /// preview).</summary>
+    private static double ClosedLoopTwistOf(RoadChain chain)
+    {
+        if (!chain.Closed || chain.Points.Count < 3)
+        {
+            return 0;
+        }
+
+        // Step a walker over the whole loop (one step per control point is enough to
+        // capture the holonomy), and measure the residual rotation at the seam.
+        FrameWalker measure = new FrameWalker();
+        RoadFrame first = default;
+        RoadFrame last = default;
+        int count = chain.Points.Count;
+        for (int i = 0; i <= count - 1; i++)
+        {
+            double t = i;
+            Vec3 pos = RoadCurve.Position(chain.Points, t, closed: true);
+            Vec3 tan = RoadCurve.Tangent(chain.Points, t, closed: true);
+            double bank = RoadCurve.Bank(chain.Points, t, closed: true) * Math.PI / 180.0;
+            RoadFrame f = measure.Step(pos, tan, bank);
+            if (i == 0)
+            {
+                first = f;
+            }
+
+            last = f;
+        }
+
+        return RoadSurface.ClosedLoopTwist(first, last);
     }
 
     private static RoadSettings SettingsForSegment(RoadChain chain, int segmentIndex)
@@ -287,6 +333,7 @@ public static class RoadGenerator
         List<RoadPoint> points = chain.Points;
 
         FrameWalker walker = new FrameWalker();
+        double twist = ClosedLoopTwistOf(chain);
 
         for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
         {
@@ -295,15 +342,15 @@ public static class RoadGenerator
             int resolution = 1 << power;
             double maxSegment = Math.Max(1.0, settings.SegmentLength);
 
-            double arcLength = RoadCurve.ArcLength(points, segmentIndex);
+            double arcLength = RoadCurve.ArcLength(points, segmentIndex, chain.Closed);
             int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
 
             for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
             {
                 double startT = segmentIndex + (double)pieceIndex / subdivision;
                 double endT = segmentIndex + (double)(pieceIndex + 1) / subdivision;
-                Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker);
-                double brushThickness = RoadCurve.Thickness(points, segmentIndex);
+                Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker, chain.Closed, twist);
+                double brushThickness = RoadCurve.Thickness(points, segmentIndex, chain.Closed);
 #pragma warning disable CS0618 // BrushSegment is experimental/deprecated
                 output.Append(BrushSegment.Build(grid, brushThickness, settings, ref solidId));
 #pragma warning restore CS0618

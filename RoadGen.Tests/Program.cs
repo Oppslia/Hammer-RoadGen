@@ -14,6 +14,9 @@ Run("Welding two road ends keeps both halves attached", TestEndToEndReverses);
 Run("A road with joining disabled stays a separate road", TestEnableJoiningSeparates);
 Run("Dragging a welded point moves the point joined to it too", TestMovePointWelded);
 Run("Joining a third track keeps the middle track's first point rendered", TestThreeTrackJoinKeepsMiddleSpanCoverage);
+Run("A welded loop closes into one continuous circular road", TestClosedLoopFlowsContinuously);
+Run("CRITICAL: A closed loop's seam cross-section returns (no twist) for any track count", TestClosedLoopSeamReturnsForAnyTrackCount);
+Run("CRITICAL: Sidewalk stays glued to the road edge on a closed loop", TestClosedLoopSidewalkStaysOnEdge);
 Run("Sidewalk stays on its own side when two road starts are joined", TestSideAwareSplit);
 Run("Sidewalk width blends across a weld and reaches the last control point", TestWidthConcatenation);
 Run("Sidewalk stops where a road has no sidewalk (doesn't run off the rails)", TestStopsAtFeaturelessTrack);
@@ -235,6 +238,203 @@ void TestThreeTrackJoinKeepsMiddleSpanCoverage()
     {
         AssertEqual(span.TrueStart - 1, span.StartPoint, "every span colours the junction leading into it");
     }
+}
+
+void TestClosedLoopFlowsContinuously()
+{
+    // Three tracks welded into a ring: A end -> B start, B end -> C start,
+    // C end -> A start (so the loop closes). BuildChains must detect the seam and
+    // mark the chain closed, and the spline must be continuous across it.
+    RoadDocument document = new RoadDocument();
+    Track first = document.Tracks[0];
+    first.Points.Add(new RoadPoint(new Vec3(0, 0, 0), 300, 10));    // loop seam (defines the junction values)
+    first.Points.Add(new RoadPoint(new Vec3(512, 0, 0), 256, 0));
+    first.Points.Add(new RoadPoint(new Vec3(512, 512, 0), 256, 0));
+
+    Track middle = new Track("Middle");
+    middle.Points.Add(new RoadPoint(new Vec3(512, 512, 0), 256, 0)); // joins A end
+    middle.Points.Add(new RoadPoint(new Vec3(0, 512, 0), 256, 0));
+    middle.Points.Add(new RoadPoint(new Vec3(-512, 512, 0), 256, 0));
+    document.Tracks.Add(middle);
+
+    Track third = new Track("Third");
+    third.Points.Add(new RoadPoint(new Vec3(-512, 512, 0), 256, 0)); // joins middle end
+    third.Points.Add(new RoadPoint(new Vec3(-512, 0, 0), 256, 0));
+    third.Points.Add(new RoadPoint(new Vec3(0, 0, 0), 200, 30, 96)); // back to A start (loop seam, different values)
+    document.Tracks.Add(third);
+
+    List<RoadChain> chains = document.BuildChains();
+    AssertEqual(1, chains.Count, "the three tracks join into one chain");
+
+    RoadChain chain = chains[0];
+    AssertTrue(chain.Closed, "chain is detected as a closed loop");
+
+    // The seam is the duplicate point, so the first and last chain points coincide.
+    AssertTrue(RoadDocument.PositionsMatch(chain.Points[0].Position, chain.Points[chain.Points.Count - 1].Position),
+        "seam points coincide");
+
+    // The closed spline treats the seam as a single interior point (like a normal
+    // end-to-end join), so it flows through the seam: position AND tangent are
+    // continuous there.
+    double tMax = chain.Points.Count - 1;
+    Vec3 pos0 = RoadCurve.Position(chain.Points, 0, closed: true);
+    Vec3 posEnd = RoadCurve.Position(chain.Points, tMax, closed: true);
+    AssertTrue((pos0 - posEnd).Length < 0.001, "curve position is continuous at the seam");
+
+    Vec3 tan0 = RoadCurve.Tangent(chain.Points, 0, closed: true).Normalized();
+    Vec3 tanEnd = RoadCurve.Tangent(chain.Points, tMax, closed: true).Normalized();
+    AssertTrue((tan0 - tanEnd).Length < 0.001, "curve tangent is continuous at the seam (flows as one road)");
+
+    // The junction's scalar values are inherited from the loop's first (seam)
+    // point, so bank/width/thickness do not jump to the other track's endpoint.
+    AssertTrue(Math.Abs(RoadCurve.Bank(chain.Points, 0, closed: true) - RoadCurve.Bank(chain.Points, tMax, closed: true)) < 0.001,
+        "bank is continuous at the seam");
+    AssertTrue(Math.Abs(RoadCurve.Bank(chain.Points, 0, closed: true) - first.Points[0].BankDegrees) < 0.001,
+        "seam bank inherits the loop's first point");
+    AssertTrue(Math.Abs(RoadCurve.Width(chain.Points, tMax, closed: true) - first.Points[0].Width) < 0.001,
+        "seam width inherits the loop's first point");
+    AssertTrue(Math.Abs(RoadCurve.Thickness(chain.Points, tMax, closed: true) - first.Points[0].Thickness) < 0.001,
+        "seam thickness inherits the loop's first point");
+
+    // The whole road cross-section must line up at the seam: the first and last
+    // preview samples coincide across every edge, so the two road arms don't
+    // stick out at the join.
+    RoadPreviewMesh pm = RoadPreviewMesh.Build(chain.Points, 24, chain.Closed);
+    int last = pm.Center.Count - 1;
+    AssertTrue((pm.Center[0] - pm.Center[last]).Length < 0.001, "preview centerline closes at the seam");
+    AssertTrue((pm.Left[0] - pm.Left[last]).Length < 0.001, "preview left edge lines up at the seam");
+    AssertTrue((pm.Right[0] - pm.Right[last]).Length < 0.001, "preview right edge lines up at the seam");
+    AssertTrue((pm.BottomLeft[0] - pm.BottomLeft[last]).Length < 0.001, "preview bottom-left edge lines up at the seam");
+    AssertTrue((pm.BottomRight[0] - pm.BottomRight[last]).Length < 0.001, "preview bottom-right edge lines up at the seam");
+}
+
+// ---------------------------------------------------------------------------
+// CRITICAL: closed-loop seam twist (frame holonomy)
+//
+// A closed loop is a chain whose first and last control points coincide (the
+// "seam"). This test guards against the two ways a closed loop can break:
+//
+// 1. FLOW – the seam is two coincident chain points (first + last) that never
+//    get deduplicated, because closing a loop means merging a chain with ITSELF,
+//    which does not fall under any of the four `MergeChains` join cases. Normal
+//    joins deduplicate the shared point into ONE interior spline point (so the
+//    road flows through it, C1-continuous); the closed seam never gets that, so
+//    it was two clamped endpoints -> a broken/loose loop. Fix: `RoadCurve`
+//    evaluates the spline cyclically (`closed`), treating the seam as a single
+//    interior point so the centerline flows through it like a normal join.
+//
+// 2. TWIST – even with the centerline flowing, the road cross-section is carried
+//    by a parallel-transported frame (`FrameWalker`). Around a NON-PLANAR loop
+//    (any loop that changes Z), that frame does not return to its starting
+//    orientation at the seam: it accumulates a residual rotation (holonomy). So
+//    the opening cross-section and the closing cross-section are rotated relative
+//    to one another -> the road looks "twisted wrong" at the seam.
+//
+//    Why 2 tracks works but 3+ fails: a simple 2-track loop happens to come back
+//    with ~zero twist, while each extra track adds more elevation/turning, i.e.
+//    more holonomy, so the twist grows with track count (a 3-track loop measured
+//    a 4.73-unit mismatch, and it only gets larger with more tracks).
+//
+//    Fix: `RoadSurface.ClosedLoopTwist` measures the residual rotation between the
+//    loop's first and last frames, and `RoadSurface.TwistCorrected` distributes it
+//    EVENLY across every sample (rotate the cross-section around its tangent by
+//    `-twist * t/maxT`). This smoothly returns the cross-section to its start at
+//    the seam. It is deliberately NOT "force the last sample to equal the first",
+//    which snapped the whole cross-section and caused a sharp turn at the end.
+//
+//    The correction is applied in `RoadPreviewMesh.Build` (preview) and in
+//    `RoadSurface.SampleGrid` via `RoadGenerator.ClosedLoopTwistOf` (export).
+//
+// This test builds N-track "roller-coaster" loops (a circle with Z always rising
+// and falling, so they are never planar) and asserts the seam cross-section
+// returns for 3, 4, 5 and 6 tracks. Before the twist fix this failed with a
+// growing mismatch; with the fix it returns cleanly for every track count.
+// ---------------------------------------------------------------------------
+void TestClosedLoopSeamReturnsForAnyTrackCount()
+{
+    for (int trackCount = 3; trackCount <= 6; trackCount++)
+    {
+        RoadDocument doc = BuildRollerCoasterLoop(trackCount);
+        RoadChain chain = doc.BuildChains()[0];
+
+        // The seam must be detected so the road is treated as one continuous loop.
+        AssertTrue(chain.Closed, $"{trackCount}-track loop is detected as closed");
+
+        // The seam cross-section must return: the last sample's left/right edge
+        // must coincide with the first sample's, otherwise the road is twisted.
+        RoadPreviewMesh pm = RoadPreviewMesh.Build(chain.Points, 24, chain.Closed);
+        int last = pm.Center.Count - 1;
+        double edgeMismatch = Math.Max((pm.Left[0] - pm.Left[last]).Length, (pm.Right[0] - pm.Right[last]).Length);
+        AssertTrue(edgeMismatch < 0.01, $"{trackCount}-track loop cross-section returns at the seam (mismatch {edgeMismatch:0.###})");
+    }
+}
+
+// Build a closed loop of `trackCount` tracks arranged around a circle, each track
+// a 3-point arc (start / mid / end) so joins are smooth even for 2 tracks, with Z
+// rising/falling along the loop so it is never planar (which is what triggers the
+// frame twist).
+RoadDocument BuildRollerCoasterLoop(int trackCount)
+{
+    RoadDocument doc = new RoadDocument();
+    for (int t = 0; t < trackCount; t++)
+    {
+        Track track = t == 0 ? doc.Tracks[0] : new Track("T" + t);
+        if (t > 0)
+        {
+            doc.Tracks.Add(track);
+        }
+
+        double a0 = 2.0 * Math.PI * t / trackCount;
+        double a1 = 2.0 * Math.PI * (t + 1) / trackCount;
+        Vec3 p0 = new Vec3(Math.Cos(a0) * 512, Math.Sin(a0) * 512, 128 * Math.Sin(a0 * 2));
+        Vec3 p1 = new Vec3(Math.Cos((a0 + a1) / 2) * 512, Math.Sin((a0 + a1) / 2) * 512, 128 * Math.Sin((a0 + a1)));
+        Vec3 p2 = new Vec3(Math.Cos(a1) * 512, Math.Sin(a1) * 512, 128 * Math.Sin(a1 * 2));
+        track.Points.Add(new RoadPoint(p0, 256, 0));
+        track.Points.Add(new RoadPoint(p1, 256, 0));
+        track.Points.Add(new RoadPoint(p2, 256, 0));
+    }
+
+    return doc;
+}
+
+// ---------------------------------------------------------------------------
+// CRITICAL: sidewalk stays glued to the road edge on a closed loop
+//
+// The road surface is twist-corrected on a closed loop, so the sidewalk frame must
+// receive the SAME correction or it decouples from the road edge. This test builds a
+// closed loop with a constant-width left sidewalk on every track (they merge into one
+// strip around the loop) and asserts the strip's inner/outer edges return to their
+// start at the seam, just like the road does. It guards the `EdgePreviewMesh.Build`
+// and `RoadGenerator.SampleEdgeGrid` paths.
+// ---------------------------------------------------------------------------
+void TestClosedLoopSidewalkStaysOnEdge()
+{
+    RoadDocument doc = BuildRollerCoasterLoop(4);
+    foreach (Track track in doc.Tracks)
+    {
+        EdgeFeature sw = new EdgeFeature { Kind = EdgeFeatureKind.Sidewalk, LeftSide = true };
+        for (int i = 0; i < track.Points.Count; i++)
+        {
+            sw.Points.Add(new EdgeFeaturePoint { Width = 128, TopOffset = 64, BottomOffset = 0, BankDegrees = 0 });
+        }
+
+        track.EdgeFeatures.Add(sw);
+    }
+
+    RoadChain chain = doc.BuildChains()[0];
+    AssertTrue(chain.Closed, "loop is detected as closed");
+
+    List<ChainFeature> features = chain.CollectFeatures();
+    ChainFeature strip = features.FirstOrDefault(f => f.Feature.Kind == EdgeFeatureKind.Sidewalk && f.Feature.LeftSide);
+    AssertTrue(strip != null, "a left sidewalk strip exists around the loop");
+
+    EdgePreviewMesh em = EdgePreviewMesh.Build(chain.Points, 24, strip, chain.Closed);
+    AssertTrue(em.InnerTop.Count >= 2, "sidewalk strip is sampled");
+    int last = em.InnerTop.Count - 1;
+    double innerMismatch = (em.InnerTop[0] - em.InnerTop[last]).Length;
+    double outerMismatch = (em.OuterTop[0] - em.OuterTop[last]).Length;
+    AssertTrue(innerMismatch < 0.01, $"sidewalk inner edge returns at the seam (mismatch {innerMismatch:0.###})");
+    AssertTrue(outerMismatch < 0.01, $"sidewalk outer edge returns at the seam (mismatch {outerMismatch:0.###})");
 }
 
 // ---------------------------------------------------------------------------

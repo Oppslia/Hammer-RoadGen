@@ -195,7 +195,7 @@ public sealed class Viewport3D : Control
                 continue;
             }
 
-            RoadPreviewMesh mesh = RoadPreviewMesh.Build(chain.Points, stepsPerSegment);
+            RoadPreviewMesh mesh = RoadPreviewMesh.Build(chain.Points, stepsPerSegment, chain.Closed);
 
             foreach (ChainSpan span in chain.Spans)
             {
@@ -323,7 +323,7 @@ public sealed class Viewport3D : Control
 
             foreach (ChainFeature chainFeature in chain.CollectFeatures())
             {
-                EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, stepsPerSegment, chainFeature);
+                EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, stepsPerSegment, chainFeature, chain.Closed);
                 if (mesh.InnerTop.Count < 2)
                 {
                     continue;
@@ -411,13 +411,14 @@ public sealed class Viewport3D : Control
             return;
         }
 
-        var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings);
+        bool activeClosed = _doc.Points.Count >= 3 && RoadDocument.PositionsMatch(_doc.Points[0].Position, _doc.Points[_doc.Points.Count - 1].Position);
+        var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings, activeClosed);
         using Pen pen = new Pen(Color.FromArgb(255, 100, 220), 1.2f);
         foreach (SegmentLayout.Segment seg in segments)
         {
             Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
-            Vec3 downStart = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T0);
-            Vec3 downEnd = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T1);
+            Vec3 downStart = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T0, activeClosed);
+            Vec3 downEnd = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T1, activeClosed);
             Vec3 a2 = a + downStart, b2 = b + downEnd, c2 = c + downEnd, d2 = a2 + c2 - b2;
 
             // Top face: the base parallelogram Hammer reconstructs.
@@ -456,7 +457,7 @@ public sealed class Viewport3D : Control
 
             foreach (ChainFeature chainFeature in chain.CollectFeatures())
             {
-                List<SegmentLayout.Segment> segments = SegmentLayout.ComputeFeatureSegments(chain.Points, chain.Settings, chainFeature);
+                List<SegmentLayout.Segment> segments = SegmentLayout.ComputeFeatureSegments(chain.Points, chain.Settings, chainFeature, chain.Closed);
                 foreach (SegmentLayout.Segment seg in segments)
                 {
                     Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;

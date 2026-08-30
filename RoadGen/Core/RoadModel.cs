@@ -379,7 +379,12 @@ public sealed class RoadDocument
                 continue;
             }
 
-            RoadChain chain = new RoadChain { Settings = track.Settings, Joinable = track.EnableJoining };
+            RoadChain chain = new RoadChain
+            {
+                Settings = track.Settings,
+                Joinable = track.EnableJoining,
+                Closed = track.Points.Count >= 3 && PositionsMatch(track.Points[0].Position, track.Points[track.Points.Count - 1].Position)
+            };
             chain.Points.AddRange(track.Points);
             chain.Spans.Add(new ChainSpan
             {
@@ -411,6 +416,17 @@ public sealed class RoadDocument
                         break;
                     }
                 }
+            }
+        }
+
+        // A merged chain can become a closed loop when its two end tracks were
+        // welded together (e.g. a third track joined back to the first). Mark every
+        // such chain so the preview and export treat it as a continuous ring.
+        foreach (RoadChain chain in chains)
+        {
+            if (!chain.Closed && chain.Points.Count >= 3 && PositionsMatch(chain.Points[0].Position, chain.Points[chain.Points.Count - 1].Position))
+            {
+                chain.Closed = true;
             }
         }
 
@@ -488,7 +504,7 @@ public sealed class RoadDocument
 
     private static RoadChain MergeChains(RoadChain first, RoadChain second)
     {
-        if (!first.Joinable || !second.Joinable)
+        if (!first.Joinable || !second.Joinable || first.Closed || second.Closed)
         {
             return null;
         }
@@ -509,6 +525,7 @@ public sealed class RoadDocument
         {
             AppendChainRange(merged, first, 0, first.Points.Count, forward: true);
             AppendChainRange(merged, second, 1, second.Points.Count, forward: true);
+            merged.Closed = IsChainClosed(merged);
             return merged;
         }
 
@@ -516,6 +533,7 @@ public sealed class RoadDocument
         {
             AppendChainRange(merged, first, 0, first.Points.Count, forward: true);
             AppendChainRange(merged, second, 0, second.Points.Count - 1, forward: false);
+            merged.Closed = IsChainClosed(merged);
             return merged;
         }
 
@@ -523,6 +541,7 @@ public sealed class RoadDocument
         {
             AppendChainRange(merged, second, 0, second.Points.Count, forward: true);
             AppendChainRange(merged, first, 1, first.Points.Count, forward: true);
+            merged.Closed = IsChainClosed(merged);
             return merged;
         }
 
@@ -530,10 +549,18 @@ public sealed class RoadDocument
         {
             AppendChainRange(merged, second, 0, second.Points.Count, forward: false);
             AppendChainRange(merged, first, 1, first.Points.Count, forward: true);
+            merged.Closed = IsChainClosed(merged);
             return merged;
         }
 
         return null;
+    }
+
+    /// <summary>True when a chain's first and last control points coincide, forming a
+    /// closed loop. The last point is a duplicate of the first, so the curve wraps.</summary>
+    private static bool IsChainClosed(RoadChain chain)
+    {
+        return chain.Points.Count >= 3 && PositionsMatch(chain.Points[0].Position, chain.Points[chain.Points.Count - 1].Position);
     }
 
     private static void AppendChainRange(RoadChain chain, RoadChain source, int startIndex, int endIndex, bool forward)
@@ -642,6 +669,10 @@ public sealed class RoadChain
     /// <summary>False when the chain contains a track with joining disabled, which
     /// keeps it from being merged into another road.</summary>
     public bool Joinable = true;
+
+    /// <summary>True when the chain's first and last control points coincide, so the
+    /// road is a closed loop and its spline wraps continuously across the seam.</summary>
+    public bool Closed;
 
     public bool ContainsTrack(Track track)
     {

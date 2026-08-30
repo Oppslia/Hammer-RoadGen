@@ -2499,6 +2499,11 @@ public sealed class MainForm : Form
         UpdateIncrements();
     }
 
+    /// <summary>True when the active track's own first and last points coincide, so
+    /// its optimisation preview counts the closing segment of a single-track loop.</summary>
+    private bool ActiveTrackClosed =>
+        _doc != null && _doc.Points.Count >= 3 && RoadDocument.PositionsMatch(_doc.Points[0].Position, _doc.Points[_doc.Points.Count - 1].Position);
+
     private void UpdatePreviewInfo()
     {
         if (_lblDispCount == null)
@@ -2506,7 +2511,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        int count = _doc.Points.Count >= 2 ? SegmentLayout.CountSegments(_doc.Points, _doc.Settings.SegmentLength) : 0;
+        int count = _doc.Points.Count >= 2 ? SegmentLayout.CountSegments(_doc.Points, _doc.Settings.SegmentLength, ActiveTrackClosed) : 0;
         _lblDispCount.Text = $"{count} disps";
 
         if (_btnNextOpt == null || _btnPrevOpt == null)
@@ -2525,7 +2530,7 @@ public sealed class MainForm : Form
 
         double current = Math.Max(1.0, _doc.Settings.SegmentLength);
 
-        double next = SegmentLayout.NextBreakpoint(_doc.Points, current, out int nextCount);
+        double next = SegmentLayout.NextBreakpoint(_doc.Points, current, out int nextCount, ActiveTrackClosed);
         if (next > current && nextCount < count)
         {
             _btnNextOpt.Text = $"{nextCount} disps ▶";
@@ -2538,7 +2543,7 @@ public sealed class MainForm : Form
             _btnNextOpt.Enabled = false;
         }
 
-        double prev = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out int prevCount);
+        double prev = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out int prevCount, ActiveTrackClosed);
         if (prev < current && prevCount > count)
         {
             _btnPrevOpt.Text = $"◀ {prevCount} disps";
@@ -2565,7 +2570,7 @@ public sealed class MainForm : Form
         double current = Math.Max(1.0, _doc.Settings.SegmentLength);
         if (next)
         {
-            double target = SegmentLayout.NextBreakpoint(_doc.Points, current, out _);
+            double target = SegmentLayout.NextBreakpoint(_doc.Points, current, out _, ActiveTrackClosed);
             if (target <= current)
             {
                 return false;
@@ -2576,7 +2581,7 @@ public sealed class MainForm : Form
         }
         else
         {
-            double target = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out _);
+            double target = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out _, ActiveTrackClosed);
             if (target >= current)
             {
                 return false;
@@ -2605,8 +2610,8 @@ public sealed class MainForm : Form
 
         double current = Math.Max(1.0, _doc.Settings.SegmentLength);
         bool canStep = next
-            ? SegmentLayout.NextBreakpoint(_doc.Points, current, out _) > current
-            : SegmentLayout.PreviousBreakpoint(_doc.Points, current, out _) < current;
+            ? SegmentLayout.NextBreakpoint(_doc.Points, current, out _, ActiveTrackClosed) > current
+            : SegmentLayout.PreviousBreakpoint(_doc.Points, current, out _, ActiveTrackClosed) < current;
         if (!canStep)
         {
             return;

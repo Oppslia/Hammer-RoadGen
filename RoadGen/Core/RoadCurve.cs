@@ -9,7 +9,7 @@ public static class RoadCurve
 {
     public static int SegmentCount(IReadOnlyList<RoadPoint> pts) => pts.Count - 1;
 
-    public static Vec3 Position(IReadOnlyList<RoadPoint> pts, double t)
+    public static Vec3 Position(IReadOnlyList<RoadPoint> pts, double t, bool closed = false)
     {
         int n = pts.Count;
         if (n == 0)
@@ -22,7 +22,22 @@ public static class RoadCurve
             return pts[0].Position;
         }
 
+        // A closed chain stores its first point again at the end (the seam). Treat the
+        // unique points as a ring so the seam becomes a single interior point of the
+        // spline (exactly like a normal end-to-end join), and the road flows through
+        // it instead of clamping both ends and breaking the loop. The last segment
+        // wraps back to the first via modular neighbours.
         GetSegmentAndU(n, t, out int i, out double u);
+        if (closed)
+        {
+            int m = n - 1;
+            int c0 = (i - 1 + m) % m;
+            int c1 = i;
+            int c2 = (i + 1) % m;
+            int c3 = (i + 2) % m;
+            return CatmullRom.Position(pts[c0].Position, pts[c1].Position, pts[c2].Position, pts[c3].Position, u);
+        }
+
         Vec3 p0 = pts[Math.Max(0, i - 1)].Position;
         Vec3 p1 = pts[i].Position;
         Vec3 p2 = pts[i + 1].Position;
@@ -30,7 +45,7 @@ public static class RoadCurve
         return CatmullRom.Position(p0, p1, p2, p3, u);
     }
 
-    public static Vec3 Tangent(IReadOnlyList<RoadPoint> pts, double t)
+    public static Vec3 Tangent(IReadOnlyList<RoadPoint> pts, double t, bool closed = false)
     {
         int n = pts.Count;
         if (n < 2)
@@ -39,6 +54,16 @@ public static class RoadCurve
         }
 
         GetSegmentAndU(n, t, out int i, out double u);
+        if (closed)
+        {
+            int m = n - 1;
+            int c0 = (i - 1 + m) % m;
+            int c1 = i;
+            int c2 = (i + 1) % m;
+            int c3 = (i + 2) % m;
+            return CatmullRom.Tangent(pts[c0].Position, pts[c1].Position, pts[c2].Position, pts[c3].Position, u);
+        }
+
         Vec3 p0 = pts[Math.Max(0, i - 1)].Position;
         Vec3 p1 = pts[i].Position;
         Vec3 p2 = pts[i + 1].Position;
@@ -46,7 +71,7 @@ public static class RoadCurve
         return CatmullRom.Tangent(p0, p1, p2, p3, u);
     }
 
-    public static double Width(IReadOnlyList<RoadPoint> pts, double t)
+    public static double Width(IReadOnlyList<RoadPoint> pts, double t, bool closed = false)
     {
         int n = pts.Count;
         if (n == 0)
@@ -60,10 +85,15 @@ public static class RoadCurve
         }
 
         GetSegmentAndU(n, t, out int i, out double u);
-        return pts[i].Width + (pts[i + 1].Width - pts[i].Width) * u;
+        // For a closed loop the last point is the seam (a duplicate of the first),
+        // so the closing segment interpolates back to the first point's value and
+        // the width is continuous across the join instead of jumping to the last
+        // track's own endpoint value.
+        int next = closed ? (i + 1) % (n - 1) : i + 1;
+        return pts[i].Width + (pts[next].Width - pts[i].Width) * u;
     }
 
-    public static double Bank(IReadOnlyList<RoadPoint> pts, double t)
+    public static double Bank(IReadOnlyList<RoadPoint> pts, double t, bool closed = false)
     {
         int n = pts.Count;
         if (n == 0)
@@ -77,10 +107,11 @@ public static class RoadCurve
         }
 
         GetSegmentAndU(n, t, out int i, out double u);
-        return pts[i].BankDegrees + (pts[i + 1].BankDegrees - pts[i].BankDegrees) * u;
+        int next = closed ? (i + 1) % (n - 1) : i + 1;
+        return pts[i].BankDegrees + (pts[next].BankDegrees - pts[i].BankDegrees) * u;
     }
 
-    public static double Thickness(IReadOnlyList<RoadPoint> pts, double t)
+    public static double Thickness(IReadOnlyList<RoadPoint> pts, double t, bool closed = false)
     {
         int n = pts.Count;
         if (n == 0)
@@ -94,19 +125,20 @@ public static class RoadCurve
         }
 
         GetSegmentAndU(n, t, out int i, out double u);
-        return pts[i].Thickness + (pts[i + 1].Thickness - pts[i].Thickness) * u;
+        int next = closed ? (i + 1) % (n - 1) : i + 1;
+        return pts[i].Thickness + (pts[next].Thickness - pts[i].Thickness) * u;
     }
 
     /// <summary>Approximate the curved length of one control-point span, in units.</summary>
-    public static double ArcLength(IReadOnlyList<RoadPoint> pts, int segment)
+    public static double ArcLength(IReadOnlyList<RoadPoint> pts, int segment, bool closed = false)
     {
         const int samples = 32;
         double length = 0;
-        Vec3 previous = Position(pts, segment);
+        Vec3 previous = Position(pts, segment, closed);
         for (int i = 1; i <= samples; i++)
         {
             double t = segment + (double)i / samples;
-            Vec3 current = Position(pts, t);
+            Vec3 current = Position(pts, t, closed);
             length += (current - previous).Length;
             previous = current;
         }
