@@ -24,6 +24,7 @@ public sealed partial class MainWindow : Form
     private ToolStripButton _btnMoveDown;
     private ToolStripButton _btnFrame;
     private ToolStripButton _btnGenerate;
+    private ToolStrip _topActionBar;
     private readonly ToolStripComboBox _gridCombo = new ToolStripComboBox();
     private readonly ToolStripButton _btnSnap = new ToolStripButton("Snap on")
     {
@@ -82,7 +83,7 @@ public sealed partial class MainWindow : Form
     private readonly NumericUpDown _numZ = new NumericUpDown();
     private readonly NumericUpDown _numWidth = new NumericUpDown();
     private readonly NumericUpDown _numBank = new NumericUpDown();
-    private readonly NumericUpDown _numPointThickness = new NumericUpDown();
+    private readonly NumericUpDown _trackThickness = new NumericUpDown();
 
     private readonly NumericUpDown _numTexScale = new NumericUpDown();
     private readonly ComboBox _cboLightmap = new ComboBox();
@@ -104,6 +105,8 @@ public sealed partial class MainWindow : Form
     private readonly NumericUpDown _numIncZ = new NumericUpDown();
     private readonly NumericUpDown _numIncWidth = new NumericUpDown();
     private readonly NumericUpDown _numIncBank = new NumericUpDown();
+    private readonly CheckBox _chkIncThickness = new CheckBox();
+    private readonly NumericUpDown _numIncThickness = new NumericUpDown();
 
     // "See disps" preview toggle + live displacement count.
     private readonly CheckBox _chkShowDisps = new CheckBox();
@@ -169,8 +172,7 @@ public sealed partial class MainWindow : Form
 
     private void BuildTopActionBar()
     {
-        ToolStrip topActionBar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
-
+        ToolStrip topActionBar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Dock = DockStyle.Top };
         _btnOpen = ToolButton("Open Track...", (s, e) => OpenTrack());
         _btnSave = ToolButton("Save Track", (s, e) => SaveTrack());
         _btnSaveAs = ToolButton("Save Track As...", (s, e) => SaveTrackAs());
@@ -216,7 +218,9 @@ public sealed partial class MainWindow : Form
         // Experimental brush export (deprecated). Uncomment to enable.
         // topActionBar.Items.Add(ToolButton("Generate Brushes...", (s, e) => GenerateBrushes()));
 
-        Controls.Add(topActionBar);
+        // The toolbar is mounted at the top of the viewport panel (Panel1), so it
+        // spans only the 3D + 2D views rather than the whole window.
+        _topActionBar = topActionBar;
     }
 
     private void BuildLayout()
@@ -261,7 +265,10 @@ public sealed partial class MainWindow : Form
             SplitterWidth = 6,
             BackColor = Color.FromArgb(38, 38, 42)
         };
+        // The action bar is docked to the top of the viewport panel, so it spans
+        // only the 3D + 2D views; the side panel keeps the full panel height.
         _split.Panel1.Controls.Add(viewportGrid);
+        _split.Panel1.Controls.Add(_topActionBar);
         _split.Panel2.Controls.Add(BuildSidePanel());
 
         StatusStrip statusBar = new StatusStrip();
@@ -283,22 +290,77 @@ public sealed partial class MainWindow : Form
     {
         Panel sidePanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(38, 38, 42), Padding = new Padding(8) };
 
-        // Sections are built top-to-bottom to match the on-screen layout:
-        // Layers, Control Points, Road Settings, Edge Features. The final add
-        // block below adds them in reverse because docking stacks in reverse
-        // z-order (last added docks first).
-        GroupBox layersSection = new GroupBox
+        // ── Control Points section ──
+        // The whole per-track editor (track list, point table, editors + increments,
+        // Solid Roads + joining, road settings) lives in one group with a normal
+        // group-box header.
+        GroupBox trackSection = new GroupBox
         {
-            Text = "Layers",
+            Text = "Control Points",
             Dock = DockStyle.Top,
-            Height = 148,
-            Padding = new Padding(6)
+            Height = 640,
+            Padding = new Padding(6),
+            ForeColor = Color.LightGray
+        };
+
+        // Track list + action buttons + up/down movers under the header.
+        Panel trackListHost = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 150,
+            Padding = new Padding(0, 4, 0, 0)
         };
 
         _lstLayers.Dock = DockStyle.Fill;
         _lstLayers.IntegralHeight = false;
 
-        // Up/down mover buttons live inside the layer list, on its right edge.
+        // Track action buttons (+ Add / - Remove / Rename / Duplicate / Merge) in
+        // a vertical column on the right of the track list.
+        FlowLayoutPanel layerActionColumn = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            Width = 92,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = new Padding(4, 0, 0, 0),
+            Padding = new Padding(0)
+        };
+
+        _btnAddLayer.Text = "+ Add";
+        _btnAddLayer.AutoSize = false;
+        _btnAddLayer.Size = new Size(88, 26);
+        _btnAddLayer.Margin = new Padding(0, 0, 0, 3);
+        _btnRemoveLayer.Text = "- Remove";
+        _btnRemoveLayer.AutoSize = false;
+        _btnRemoveLayer.Size = new Size(88, 26);
+        _btnRemoveLayer.Margin = new Padding(0, 0, 0, 3);
+        _btnRenameLayer.Text = "Rename";
+        _btnRenameLayer.AutoSize = false;
+        _btnRenameLayer.Size = new Size(88, 26);
+        _btnRenameLayer.Margin = new Padding(0, 0, 0, 3);
+        _btnDuplicateLayer.Text = "Duplicate";
+        _btnDuplicateLayer.AutoSize = false;
+        _btnDuplicateLayer.Size = new Size(88, 26);
+        _btnDuplicateLayer.Margin = new Padding(0, 0, 0, 3);
+        _btnMergeLayer.Text = "Merge";
+        _btnMergeLayer.AutoSize = false;
+        _btnMergeLayer.Size = new Size(88, 26);
+        _btnMergeLayer.Margin = new Padding(0);
+        _btnMergeLayer.Enabled = false;
+
+        StyleLayerButton(_btnAddLayer);
+        StyleLayerButton(_btnRemoveLayer);
+        StyleLayerButton(_btnRenameLayer);
+        StyleLayerButton(_btnDuplicateLayer);
+        StyleLayerButton(_btnMergeLayer);
+
+        layerActionColumn.Controls.Add(_btnAddLayer);
+        layerActionColumn.Controls.Add(_btnRemoveLayer);
+        layerActionColumn.Controls.Add(_btnRenameLayer);
+        layerActionColumn.Controls.Add(_btnDuplicateLayer);
+        layerActionColumn.Controls.Add(_btnMergeLayer);
+
+        // Up/down mover buttons live at the far right of the track list.
         FlowLayoutPanel layerMoverColumn = new FlowLayoutPanel
         {
             Dock = DockStyle.Right,
@@ -316,66 +378,20 @@ public sealed partial class MainWindow : Form
         _btnLayerDown.Size = new Size(26, 24);
         _btnLayerDown.Margin = new Padding(0);
 
-        layerMoverColumn.Controls.Add(_btnLayerUp);
-        layerMoverColumn.Controls.Add(_btnLayerDown);
-
-        Panel layerListHost = new Panel { Dock = DockStyle.Fill };
-        layerListHost.Controls.Add(_lstLayers);
-        layerListHost.Controls.Add(layerMoverColumn);
-
-        FlowLayoutPanel layerActionRow = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 30,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            Padding = new Padding(0, 4, 0, 0)
-        };
-
-        _btnAddLayer.Text = "+ Add";
-        _btnAddLayer.AutoSize = true;
-        _btnRemoveLayer.Text = "- Remove";
-        _btnRemoveLayer.AutoSize = true;
-        _btnRenameLayer.Text = "Rename";
-        _btnRenameLayer.AutoSize = true;
-        _btnDuplicateLayer.Text = "Duplicate";
-        _btnDuplicateLayer.AutoSize = true;
-        _btnMergeLayer.Text = "Merge";
-        _btnMergeLayer.AutoSize = true;
-        _btnMergeLayer.Enabled = false;
-
-        StyleLayerButton(_btnAddLayer);
-        StyleLayerButton(_btnRemoveLayer);
-        StyleLayerButton(_btnRenameLayer);
-        StyleLayerButton(_btnDuplicateLayer);
-        StyleLayerButton(_btnMergeLayer);
         StyleLayerButton(_btnLayerUp);
         StyleLayerButton(_btnLayerDown);
 
-        layerActionRow.Controls.Add(_btnAddLayer);
-        layerActionRow.Controls.Add(_btnRemoveLayer);
-        layerActionRow.Controls.Add(_btnRenameLayer);
-        layerActionRow.Controls.Add(_btnDuplicateLayer);
-        layerActionRow.Controls.Add(_btnMergeLayer);
+        layerMoverColumn.Controls.Add(_btnLayerUp);
+        layerMoverColumn.Controls.Add(_btnLayerDown);
 
-        _chkEnableJoining.Text = "Enable track joining";
-        _chkEnableJoining.Dock = DockStyle.Bottom;
-        _chkEnableJoining.Height = 22;
-        _chkEnableJoining.ForeColor = Color.LightGray;
-        _chkEnableJoining.Checked = true;
+        // Docking is in reverse z-order (last added docks first), so the action
+        // column is added last to sit at the far right, with the movers next to it
+        // and the list filling the rest: [list | movers | actions].
+        trackListHost.Controls.Add(_lstLayers);
+        trackListHost.Controls.Add(layerMoverColumn);
+        trackListHost.Controls.Add(layerActionColumn);
 
-        layersSection.Controls.Add(layerListHost);
-        layersSection.Controls.Add(_chkEnableJoining);
-        layersSection.Controls.Add(layerActionRow);
-
-        GroupBox controlPointsSection = new GroupBox
-        {
-            Text = "Control Points",
-            Dock = DockStyle.Top,
-            Height = 325,
-            Padding = new Padding(6)
-        };
-
+        // Point table (fills the middle of the Track section).
         _list.Dock = DockStyle.Fill;
         _list.View = View.Details;
         _list.FullRowSelect = true;
@@ -389,77 +405,45 @@ public sealed partial class MainWindow : Form
         _list.Columns.Add("Width", 62, HorizontalAlignment.Right);
         _list.Columns.Add("Bank", 62, HorizontalAlignment.Right);
         _list.Columns.Add("Thickness", 70, HorizontalAlignment.Right);
-        controlPointsSection.Controls.Add(_list);
 
-        TableLayoutPanel controlPointInputs = new TableLayoutPanel
+        // Per-point editors + their increments, one row per property (same line,
+        // mirroring the Edge Features rows): label | Grid ☑ + step | value.
+        TableLayoutPanel controlPointEditorRows = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 60,
-            ColumnCount = 6,
-            RowCount = 2,
+            Height = 150,
+            ColumnCount = 3,
+            RowCount = 6,
             Padding = new Padding(0, 6, 0, 0)
         };
-        for (int c = 0; c < 6; c++)
+        controlPointEditorRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        controlPointEditorRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        controlPointEditorRows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int r = 0; r < 6; r++)
         {
-            controlPointInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16.67f));
+            controlPointEditorRows.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         }
 
-        controlPointInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-        controlPointInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        AddFeatureSettingRow(controlPointEditorRows, 0, "X", _numX, BuildFeatureIncrementCell(_chkIncX, _numIncX, followGrid: true, customValue: 64m));
+        AddFeatureSettingRow(controlPointEditorRows, 1, "Y", _numY, BuildFeatureIncrementCell(_chkIncY, _numIncY, followGrid: true, customValue: 64m));
+        AddFeatureSettingRow(controlPointEditorRows, 2, "Z", _numZ, BuildFeatureIncrementCell(_chkIncZ, _numIncZ, followGrid: true, customValue: 64m));
+        AddFeatureSettingRow(controlPointEditorRows, 3, "Width", _numWidth, BuildFeatureIncrementCell(_chkIncWidth, _numIncWidth, followGrid: true, customValue: 64m));
+        AddFeatureSettingRow(controlPointEditorRows, 4, "Bank", _numBank, BuildFeatureIncrementCell(_chkIncBank, _numIncBank, followGrid: false, customValue: 4m));
+        AddFeatureSettingRow(controlPointEditorRows, 5, "Thick", _trackThickness, BuildFeatureIncrementCell(_chkIncThickness, _numIncThickness, followGrid: true, customValue: 64m));
 
-        AddField(controlPointInputs, 0, "X", _numX);
-        AddField(controlPointInputs, 1, "Y", _numY);
-        AddField(controlPointInputs, 2, "Z", _numZ);
-        AddField(controlPointInputs, 3, "Width", _numWidth);
-        AddField(controlPointInputs, 4, "Bank", _numBank);
-        AddField(controlPointInputs, 5, "Thick", _numPointThickness);
-        _numPointThickness.Minimum = 0;
-        controlPointsSection.Controls.Add(controlPointInputs);
+        // AddFeatureSettingRow clamps numerics to 0..100000; restore the wider
+        // point-value range (X/Y/Z/Bank can be negative, old editors allowed ±1,000,000).
+        _numX.Minimum = -1000000; _numX.Maximum = 1000000;
+        _numY.Minimum = -1000000; _numY.Maximum = 1000000;
+        _numZ.Minimum = -1000000; _numZ.Maximum = 1000000;
+        _numWidth.Minimum = -1000000; _numWidth.Maximum = 1000000;
+        _numBank.Minimum = -1000000; _numBank.Maximum = 1000000;
+        _trackThickness.Minimum = 0;
 
-        // Increment/Decrement interval section, docked below the editors.
-        GroupBox incrementIntervalSection = new GroupBox
-        {
-            Text = "Increment/Decrement interval",
-            Dock = DockStyle.Bottom,
-            Height = 74,
-            Padding = new Padding(6, 2, 6, 4)
-        };
-
-        TableLayoutPanel incrementIntervalInputs = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 5,
-            RowCount = 2,
-            Margin = new Padding(0)
-        };
-        for (int c = 0; c < 5; c++)
-        {
-            incrementIntervalInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
-        }
-
-        incrementIntervalInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        incrementIntervalInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-
-        AddIncrementColumn(incrementIntervalInputs, 0, _chkIncX, _numIncX);
-        AddIncrementColumn(incrementIntervalInputs, 1, _chkIncY, _numIncY);
-        AddIncrementColumn(incrementIntervalInputs, 2, _chkIncZ, _numIncZ);
-        AddIncrementColumn(incrementIntervalInputs, 3, _chkIncWidth, _numIncWidth);
-        AddIncrementColumn(incrementIntervalInputs, 4, _chkIncBank, _numIncBank);
-
-        incrementIntervalSection.Controls.Add(incrementIntervalInputs);
-        controlPointsSection.Controls.Add(incrementIntervalSection);
-
-        GroupBox roadSettingsSection = new GroupBox
-        {
-            Text = "Road Settings",
-            Dock = DockStyle.Top,
-            Height = 300,
-            Padding = new Padding(6)
-        };
-
+        // Road settings inputs.
         TableLayoutPanel roadSettingsInputs = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
+            Dock = DockStyle.Bottom,
             Height = 135,
             ColumnCount = 2,
             RowCount = 5,
@@ -493,15 +477,17 @@ public sealed partial class MainWindow : Form
         AddSettingRow(roadSettingsInputs, 3, "Lightmap scale", _cboLightmap);
         AddSettingRow(roadSettingsInputs, 4, "Grid snap", _cboSnap);
 
+        // Solid Roads + Enable track joining, directly under the point table.
         GroupBox solidRoadsSection = new GroupBox
         {
             Text = "Solid Roads",
-            Dock = DockStyle.Top,
+            Dock = DockStyle.Bottom,
             Height = 52,
-            Padding = new Padding(6, 2, 6, 4)
+            Padding = new Padding(6, 2, 6, 4),
+            ForeColor = Color.LightGray
         };
 
-        FlowLayoutPanel solidRoadsCheckboxRow = new FlowLayoutPanel
+        FlowLayoutPanel solidRoadsJoiningRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
@@ -510,22 +496,45 @@ public sealed partial class MainWindow : Form
 
         _chkSolidLeft.Text = "Left side";
         _chkSolidLeft.AutoSize = true;
+        _chkSolidLeft.ForeColor = Color.LightGray;
         _chkSolidRight.Text = "Right side";
         _chkSolidRight.AutoSize = true;
+        _chkSolidRight.ForeColor = Color.LightGray;
         _chkSolidBottom.Text = "Bottom";
         _chkSolidBottom.AutoSize = true;
-        solidRoadsCheckboxRow.Controls.Add(_chkSolidLeft);
-        solidRoadsCheckboxRow.Controls.Add(_chkSolidRight);
-        solidRoadsCheckboxRow.Controls.Add(_chkSolidBottom);
-        solidRoadsSection.Controls.Add(solidRoadsCheckboxRow);
+        _chkSolidBottom.ForeColor = Color.LightGray;
+        _chkEnableJoining.Text = "Enable track joining";
+        _chkEnableJoining.AutoSize = true;
+        _chkEnableJoining.ForeColor = Color.LightGray;
+        _chkEnableJoining.Checked = true;
 
-        // Optimization section: sits under Solid Roads inside Road Settings and
-        // replaces the old "Optimization scale" numeric field.
+        solidRoadsJoiningRow.Controls.Add(_chkSolidLeft);
+        solidRoadsJoiningRow.Controls.Add(_chkSolidRight);
+        solidRoadsJoiningRow.Controls.Add(_chkSolidBottom);
+        solidRoadsJoiningRow.Controls.Add(_chkEnableJoining);
+        solidRoadsSection.Controls.Add(solidRoadsJoiningRow);
+
+        // Docking stacks in reverse z-order (last added docks first), so children
+        // are added bottom-up: Solid Roads, road settings, editor rows, point table,
+        // track list, header. The track action buttons live in the track list's
+        // right-hand column, so there is no bottom action row.
+        trackSection.Controls.Add(solidRoadsSection);
+        trackSection.Controls.Add(roadSettingsInputs);
+        trackSection.Controls.Add(controlPointEditorRows);
+        trackSection.Controls.Add(_list);
+        trackSection.Controls.Add(trackListHost);
+
+        // ── Optimization section (standalone group, sits at the bottom of the
+        // side panel, under Edge Features). The height fits the toggle row (26) +
+        // step row (30) plus the group title and padding, so the step buttons
+        // aren't clipped.
         GroupBox optimizationSection = new GroupBox
         {
             Text = "Optimization",
-            Dock = DockStyle.Fill,
-            Padding = new Padding(6)
+            Dock = DockStyle.Top,
+            Height = 90,
+            Padding = new Padding(6),
+            ForeColor = Color.LightGray
         };
 
         // Rows are added in reverse visual order because docking stacks in reverse
@@ -533,24 +542,55 @@ public sealed partial class MainWindow : Form
         optimizationSection.Controls.Add(BuildOptimizationStepRow());
         optimizationSection.Controls.Add(BuildOptimizationToggleRow());
 
-        // Docking is applied in reverse z-order, so add in reverse of desired
-        // layout: table at the top, Solid Roads below it, Optimization filling
-        // the remainder.
-        roadSettingsSection.Controls.Add(optimizationSection);
-        roadSettingsSection.Controls.Add(solidRoadsSection);
-        roadSettingsSection.Controls.Add(roadSettingsInputs);
-
         GroupBox edgeFeaturesSection = new GroupBox
         {
             Text = "Edge Features",
             Dock = DockStyle.Top,
             Height = 500,
-            Padding = new Padding(6)
+            Padding = new Padding(6),
+            ForeColor = Color.LightGray
         };
 
-        _lstFeatures.Dock = DockStyle.Top;
-        _lstFeatures.Height = 58;
+        // Feature list + action buttons (+ Add / - Remove) in a vertical column on
+        // the right, mirroring the track list in the Control Points section.
+        Panel featureListHost = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 58,
+            Padding = new Padding(0, 0, 0, 4)
+        };
+
+        _lstFeatures.Dock = DockStyle.Fill;
         _lstFeatures.IntegralHeight = false;
+
+        FlowLayoutPanel featureActionColumn = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            Width = 76,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = new Padding(4, 0, 0, 0),
+            Padding = new Padding(0)
+        };
+
+        _btnAddFeature.Text = "+ Add";
+        _btnAddFeature.AutoSize = false;
+        _btnAddFeature.Size = new Size(72, 24);
+        _btnAddFeature.Margin = new Padding(3, 0, 0, 3);
+        _btnRemoveFeature.Text = "- Remove";
+        _btnRemoveFeature.AutoSize = false;
+        _btnRemoveFeature.Size = new Size(72, 24);
+        _btnRemoveFeature.Margin = new Padding(3, 0, 0, 3);
+        StyleLayerButton(_btnAddFeature);
+        StyleLayerButton(_btnRemoveFeature);
+
+        featureActionColumn.Controls.Add(_btnAddFeature);
+        featureActionColumn.Controls.Add(_btnRemoveFeature);
+
+        // Docking is in reverse z-order (last added docks first), so the action
+        // column is added last to sit at the far right: [feature list | buttons].
+        featureListHost.Controls.Add(_lstFeatures);
+        featureListHost.Controls.Add(featureActionColumn);
 
         _lstFeaturePoints.Dock = DockStyle.Fill;
         _lstFeaturePoints.View = View.Details;
@@ -632,30 +672,10 @@ public sealed partial class MainWindow : Form
         _numFeatureTopZ.Minimum = -100000;
         _numFeatureBank.Minimum = -100000;
 
-        FlowLayoutPanel featureActionRow = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 28,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            Padding = new Padding(0, 4, 0, 0)
-        };
-
-        _btnAddFeature.Text = "+ Add";
-        _btnAddFeature.AutoSize = true;
-        _btnRemoveFeature.Text = "- Remove";
-        _btnRemoveFeature.AutoSize = true;
-        StyleLayerButton(_btnAddFeature);
-        StyleLayerButton(_btnRemoveFeature);
-
-        featureActionRow.Controls.Add(_btnAddFeature);
-        featureActionRow.Controls.Add(_btnRemoveFeature);
-
         edgeFeaturesSection.Controls.Add(_lstFeaturePoints);
-        edgeFeaturesSection.Controls.Add(_lstFeatures);
+        edgeFeaturesSection.Controls.Add(featureListHost);
         edgeFeaturesSection.Controls.Add(featureFaceToggleRow);
         edgeFeaturesSection.Controls.Add(featureInputs);
-        edgeFeaturesSection.Controls.Add(featureActionRow);
 
         Button generateCommand = new Button
         {
@@ -673,16 +693,42 @@ public sealed partial class MainWindow : Form
 
         // Docked controls stack in reverse z-order (last added docks first), so
         // the last top-docked control ends up at the very top. Desired layout from
-        // top to bottom: Layers, Control Points, Road Settings, Edge Features.
+        // top to bottom: Control Points, Edge Features, Optimization.
+        sidePanelScroll.Controls.Add(optimizationSection);
         sidePanelScroll.Controls.Add(edgeFeaturesSection);
-        sidePanelScroll.Controls.Add(roadSettingsSection);
-        sidePanelScroll.Controls.Add(controlPointsSection);
-        sidePanelScroll.Controls.Add(layersSection);
+        sidePanelScroll.Controls.Add(trackSection);
 
         sidePanel.Controls.Add(sidePanelScroll);
         sidePanel.Controls.Add(generateCommand);
 
+        // Group-box titles are lit up to LightGray; reset the editor text colors
+        // so the inputs stay readable on their light backgrounds.
+        StyleSectionInputTextColors();
+
         return sidePanel;
+    }
+
+    /// <summary>The section group-box titles are drawn with the group's ForeColor,
+    /// which is dark-on-dark here, so they are lit up to LightGray. ForeColor is
+    /// ambient, so this explicitly restores the theme window-text color on every
+    /// editor input that sits inside those groups, keeping them readable on their
+    /// light (white) backgrounds.</summary>
+    private void StyleSectionInputTextColors()
+    {
+        Control[] darkTextInputs =
+        {
+            _lstLayers, _list, _lstFeatures, _lstFeaturePoints,
+            _numX, _numY, _numZ, _numWidth, _numBank, _trackThickness,
+            _numTexScale, _cboPower, _cboSnap, _cboLightmap, _txtMaterial,
+            _numIncX, _numIncY, _numIncZ, _numIncWidth, _numIncBank, _numIncThickness,
+            _numFeatureOffset, _numFeatureWidth, _numFeatureBottomZ, _numFeatureTopZ, _numFeatureBank,
+            _numFeatureIncOffset, _numFeatureIncWidth, _numFeatureIncBottomZ, _numFeatureIncTopZ, _numFeatureIncBank,
+            _cboFeatureKind, _cboFeatureSide, _txtFeatureMaterial
+        };
+        foreach (Control inputControl in darkTextInputs)
+        {
+            inputControl.ForeColor = SystemColors.WindowText;
+        }
     }
 
     /// <summary>Builds the Optimization section's step row (the ◀ / ▶ buttons that
@@ -749,6 +795,7 @@ public sealed partial class MainWindow : Form
         return toggleRow;
     }
 
+
     private void ConfigureIncrementControls()
     {
         // Seed the increment controls from the document defaults. Events are wired
@@ -773,6 +820,8 @@ public sealed partial class MainWindow : Form
         _numIncZ.Value = (decimal)s.IncCustomZ;
         _numIncWidth.Value = (decimal)s.IncCustomWidth;
         _numIncBank.Value = (decimal)s.IncCustomBank;
+        _chkIncThickness.Checked = s.IncUseGridThickness;
+        _numIncThickness.Value = (decimal)s.IncCustomThickness;
     }
 
     private void LoadFeatureIncrementsIntoControls()
@@ -809,6 +858,8 @@ public sealed partial class MainWindow : Form
         s.IncCustomZ = (double)_numIncZ.Value;
         s.IncCustomWidth = (double)_numIncWidth.Value;
         s.IncCustomBank = (double)_numIncBank.Value;
+        s.IncUseGridThickness = _chkIncThickness.Checked;
+        s.IncCustomThickness = (double)_numIncThickness.Value;
 
         UpdateIncrements();
         _doc.NotifyChanged();
@@ -817,9 +868,6 @@ public sealed partial class MainWindow : Form
     private void UpdateIncrements()
     {
         double grid = _doc.Settings.Snap > 0 ? _doc.Settings.Snap : 64;
-
-        // Per-point thickness increment follows the grid snap.
-        _numPointThickness.Increment = (decimal)grid;
 
         // Edge feature values follow the grid snap unless their own "Grid"
         // checkbox is unchecked, in which case the custom interval is used.
@@ -834,6 +882,7 @@ public sealed partial class MainWindow : Form
         ApplyIncrement(_numZ, _chkIncZ, _numIncZ, grid);
         ApplyIncrement(_numWidth, _chkIncWidth, _numIncWidth, grid);
         ApplyIncrement(_numBank, _chkIncBank, _numIncBank, grid);
+        ApplyIncrement(_trackThickness, _chkIncThickness, _numIncThickness, grid);
     }
 
     private void ApplyFeatureIncrementsFromControls()
@@ -1000,7 +1049,7 @@ public sealed partial class MainWindow : Form
         _numZ.ValueChanged += (s, e) => UpdatePointFromEditors();
         _numWidth.ValueChanged += (s, e) => UpdatePointFromEditors();
         _numBank.ValueChanged += (s, e) => UpdatePointFromEditors();
-        _numPointThickness.ValueChanged += (s, e) => UpdatePointFromEditors();
+        _trackThickness.ValueChanged += (s, e) => UpdatePointFromEditors();
 
         _cboPower.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _txtMaterial.TextChanged += (s, e) => ApplySettingsFromControls();
@@ -1036,7 +1085,7 @@ public sealed partial class MainWindow : Form
         AttachUndoBatch(_numZ);
         AttachUndoBatch(_numWidth);
         AttachUndoBatch(_numBank);
-        AttachUndoBatch(_numPointThickness);
+        AttachUndoBatch(_trackThickness);
         AttachUndoBatch(_numTexScale);
         AttachUndoBatch(_cboLightmap);
         AttachUndoBatch(_cboSnap);
@@ -1050,6 +1099,8 @@ public sealed partial class MainWindow : Form
         _numIncZ.ValueChanged += (s, e) => ApplyIncrementsFromControls();
         _numIncWidth.ValueChanged += (s, e) => ApplyIncrementsFromControls();
         _numIncBank.ValueChanged += (s, e) => ApplyIncrementsFromControls();
+        _chkIncThickness.CheckedChanged += (s, e) => ApplyIncrementsFromControls();
+        _numIncThickness.ValueChanged += (s, e) => ApplyIncrementsFromControls();
         AttachUndoBatch(_chkIncX);
         AttachUndoBatch(_chkIncY);
         AttachUndoBatch(_chkIncZ);
@@ -1060,6 +1111,8 @@ public sealed partial class MainWindow : Form
         AttachUndoBatch(_numIncZ);
         AttachUndoBatch(_numIncWidth);
         AttachUndoBatch(_numIncBank);
+        AttachUndoBatch(_chkIncThickness);
+        AttachUndoBatch(_numIncThickness);
         AttachUndoBatch(_chkSolidLeft);
         AttachUndoBatch(_chkSolidRight);
         AttachUndoBatch(_chkSolidBottom);
@@ -2192,7 +2245,7 @@ public sealed partial class MainWindow : Form
         double dz = (double)_numZ.Value - _prevZ;
         bool widthChanged = (double)_numWidth.Value != _prevWidth;
         bool bankChanged = (double)_numBank.Value != _prevBank;
-        bool thicknessChanged = (double)_numPointThickness.Value != _prevThickness;
+        bool thicknessChanged = (double)_trackThickness.Value != _prevThickness;
 
         foreach (int i in selected)
         {
@@ -2213,7 +2266,7 @@ public sealed partial class MainWindow : Form
 
             if (thicknessChanged)
             {
-                p.Thickness = (double)_numPointThickness.Value;
+                p.Thickness = (double)_trackThickness.Value;
             }
 
             UpdateListRow(i);
@@ -2241,7 +2294,7 @@ public sealed partial class MainWindow : Form
         _prevZ = (double)_numZ.Value;
         _prevWidth = (double)_numWidth.Value;
         _prevBank = (double)_numBank.Value;
-        _prevThickness = (double)_numPointThickness.Value;
+        _prevThickness = (double)_trackThickness.Value;
     }
 
     private void OnViewPointSelected(int index, bool additive)
@@ -2483,7 +2536,7 @@ public sealed partial class MainWindow : Form
             _numZ.Value = (decimal)p.Position.Z;
             _numWidth.Value = (decimal)p.Width;
             _numBank.Value = (decimal)p.BankDegrees;
-            _numPointThickness.Value = (decimal)p.Thickness;
+            _trackThickness.Value = (decimal)p.Thickness;
         }
 
         CaptureEditorValues();

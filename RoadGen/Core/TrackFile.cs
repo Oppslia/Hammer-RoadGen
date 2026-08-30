@@ -33,7 +33,7 @@ namespace RoadGen.Core;
 public static class TrackFile
 {
     /// <summary>The version this build writes to disk. Bump whenever the format changes.</summary>
-    public const int CurrentVersion = 8;
+    public const int CurrentVersion = 9;
 
     /// <summary>One entry per historical version gap. Index 0 migrates v1->v2,
     /// index 1 migrates v2->v3, and so on.</summary>
@@ -45,8 +45,9 @@ public static class TrackFile
         Migrate4To5,
         Migrate5To6,
         Migrate6To7,
-        Migrate7To8
-        // Migrate8To9, ... append future migrations here.
+        Migrate7To8,
+        Migrate8To9
+        // Migrate9To10, ... append future migrations here.
     };
 
     public sealed class TrackLoadResult
@@ -119,6 +120,8 @@ public static class TrackFile
         public double IncCustomZ { get; set; } = 64;
         public double IncCustomWidth { get; set; } = 64;
         public double IncCustomBank { get; set; } = 4;
+        public bool IncUseGridThickness { get; set; } = true;
+        public double IncCustomThickness { get; set; } = 64;
         public bool FeatureIncUseGridOffset { get; set; } = true;
         public bool FeatureIncUseGridWidth { get; set; } = true;
         public bool FeatureIncUseGridBottomZ { get; set; } = true;
@@ -177,6 +180,8 @@ public static class TrackFile
                     IncCustomZ = track.Settings.IncCustomZ,
                     IncCustomWidth = track.Settings.IncCustomWidth,
                     IncCustomBank = track.Settings.IncCustomBank,
+                    IncUseGridThickness = track.Settings.IncUseGridThickness,
+                    IncCustomThickness = track.Settings.IncCustomThickness,
                     FeatureIncUseGridOffset = track.Settings.FeatureIncUseGridOffset,
                     FeatureIncUseGridWidth = track.Settings.FeatureIncUseGridWidth,
                     FeatureIncUseGridBottomZ = track.Settings.FeatureIncUseGridBottomZ,
@@ -378,6 +383,8 @@ public static class TrackFile
         settings.IncCustomZ = data.IncCustomZ;
         settings.IncCustomWidth = data.IncCustomWidth;
         settings.IncCustomBank = data.IncCustomBank;
+        settings.IncUseGridThickness = data.IncUseGridThickness;
+        settings.IncCustomThickness = data.IncCustomThickness;
         settings.FeatureIncUseGridOffset = data.FeatureIncUseGridOffset;
         settings.FeatureIncUseGridWidth = data.FeatureIncUseGridWidth;
         settings.FeatureIncUseGridBottomZ = data.FeatureIncUseGridBottomZ;
@@ -588,6 +595,32 @@ public static class TrackFile
             if (s["FeatureIncCustomBottomZ"] == null) s["FeatureIncCustomBottomZ"] = 64.0;
             if (s["FeatureIncCustomTopZ"] == null) s["FeatureIncCustomTopZ"] = 64.0;
             if (s["FeatureIncCustomBank"] == null) s["FeatureIncCustomBank"] = 4.0;
+        }
+    }
+
+    /// <summary>v8 -> v9: adds the control-point thickness increment settings
+    /// (IncUseGridThickness / IncCustomThickness).</summary>
+    private static void Migrate8To9(JsonObject root)
+    {
+        if (root["Tracks"] is not JsonArray tracks)
+        {
+            return;
+        }
+
+        foreach (JsonNode trackNode in tracks)
+        {
+            if (trackNode is not JsonObject track)
+            {
+                continue;
+            }
+
+            if (track["Settings"] is not JsonObject s)
+            {
+                continue;
+            }
+
+            if (s["IncUseGridThickness"] == null) s["IncUseGridThickness"] = true;
+            if (s["IncCustomThickness"] == null) s["IncCustomThickness"] = 64.0;
         }
     }
 }

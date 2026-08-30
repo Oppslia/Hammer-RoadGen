@@ -16,7 +16,7 @@ public static class MainWindowHelpers
         {
             DisplayStyle = ToolStripItemDisplayStyle.Text
         };
-        
+
         btn.Click += onClick;
 
         return btn;
@@ -32,29 +32,6 @@ public static class MainWindowHelpers
         button.FlatAppearance.BorderSize = 1;
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(219, 232, 252);
         button.FlatAppearance.MouseDownBackColor = Color.FromArgb(190, 214, 248);
-    }
-
-    public static void AddField(TableLayoutPanel table, int col, string label, NumericUpDown num)
-    {
-        Label lbl = new Label
-        {
-            Text = label,
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter,
-            ForeColor = Color.FromArgb(190, 195, 205),
-            Font = new Font("Segoe UI", 8),
-            Margin = new Padding(4, 0, 4, 0)
-        };
-
-        num.Dock = DockStyle.Fill;
-        num.DecimalPlaces = 2;
-        num.Minimum = -1000000;
-        num.Maximum = 1000000;
-        num.Increment = 16;
-        num.Margin = new Padding(4, 2, 4, 2);
-
-        table.Controls.Add(lbl, col, 0);
-        table.Controls.Add(num, col, 1);
     }
 
     public static void AddSettingRow(TableLayoutPanel table, int row, string label, Control control)

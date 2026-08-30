@@ -165,6 +165,8 @@ public sealed class UndoManager
                 && first.IncCustomZ == second.IncCustomZ
                 && first.IncCustomWidth == second.IncCustomWidth
                 && first.IncCustomBank == second.IncCustomBank
+                && first.IncUseGridThickness == second.IncUseGridThickness
+                && first.IncCustomThickness == second.IncCustomThickness
                 && first.FeatureIncUseGridOffset == second.FeatureIncUseGridOffset
                 && first.FeatureIncUseGridWidth == second.FeatureIncUseGridWidth
                 && first.FeatureIncUseGridBottomZ == second.FeatureIncUseGridBottomZ

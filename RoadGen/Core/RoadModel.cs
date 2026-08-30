@@ -73,6 +73,8 @@ public sealed class RoadSettings
     public double IncCustomZ = 64;
     public double IncCustomWidth = 64;
     public double IncCustomBank = 4;
+    public bool IncUseGridThickness = true;
+    public double IncCustomThickness = 64;
 
     // Edge-feature editor increment/decrement interval settings, mirroring the road
     // point editor's Inc* fields above. Each feature value row (Offset, Width,
@@ -124,6 +126,8 @@ public sealed class RoadSettings
             IncCustomZ = IncCustomZ,
             IncCustomWidth = IncCustomWidth,
             IncCustomBank = IncCustomBank,
+            IncUseGridThickness = IncUseGridThickness,
+            IncCustomThickness = IncCustomThickness,
             FeatureIncUseGridOffset = FeatureIncUseGridOffset,
             FeatureIncUseGridWidth = FeatureIncUseGridWidth,
             FeatureIncUseGridBottomZ = FeatureIncUseGridBottomZ,
