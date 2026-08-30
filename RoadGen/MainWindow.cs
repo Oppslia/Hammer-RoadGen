@@ -109,8 +109,8 @@ public sealed partial class MainWindow : Form
     private readonly CheckBox _chkShowDisps = new CheckBox();
     private readonly CheckBox _chkShowSidewalkDisps = new CheckBox();
     private readonly Label _lblDispCount = new Label();
-    private readonly Button _btnPrevOpt = new Button();
-    private readonly Button _btnNextOpt = new Button();
+    private readonly Button _btnOptimizePrev = new Button();
+    private readonly Button _btnOptimizeNext = new Button();
 
     // Hold-to-repeat for the optimization buttons. A single press-and-hold is one
     // undo step: first auto-repeat after a debounce, then a steady interval.
@@ -142,7 +142,7 @@ public sealed partial class MainWindow : Form
         MinimumSize = new Size(980, 640);
         BackColor = Color.FromArgb(30, 30, 34);
 
-        BuildToolStrip();
+        BuildTopActionBar();
         BuildLayout();
         ConfigureIncrementControls();
         WireEvents();
@@ -167,7 +167,7 @@ public sealed partial class MainWindow : Form
 
     // ---------------------------------------------------------------- layout
 
-    private void BuildToolStrip()
+    private void BuildTopActionBar()
     {
         ToolStrip topActionBar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
 
@@ -194,7 +194,7 @@ public sealed partial class MainWindow : Form
         topActionBar.Items.Add(new ToolStripSeparator());
         _btnFrame = ToolButton("Frame All", (s, e) => FrameAll());
         topActionBar.Items.Add(_btnFrame);
-
+        topActionBar.Items.Add(_btnSnap);
         // Hammer-style grid controls: an interval (HU) dropdown plus a snap-to-grid
         // toggle. The dropdown mirrors the side-panel "Grid snap" setting.
         topActionBar.Items.Add(new ToolStripSeparator());
@@ -203,7 +203,6 @@ public sealed partial class MainWindow : Form
         _gridCombo.SelectedIndex = 6; // 64
         topActionBar.Items.Add(new ToolStripLabel("Grid:"));
         topActionBar.Items.Add(_gridCombo);
-        topActionBar.Items.Add(_btnSnap);
 
         topActionBar.Items.Add(new ToolStripSeparator());
         _btnUndo = ToolButton("Undo", (s, e) => DoUndo());
@@ -284,228 +283,10 @@ public sealed partial class MainWindow : Form
     {
         Panel sidePanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(38, 38, 42), Padding = new Padding(8) };
 
-        GroupBox controlPointsSection = new GroupBox
-        {
-            Text = "Control Points",
-            Dock = DockStyle.Top,
-            Height = 422,
-            Padding = new Padding(6)
-        };
-
-        _list.Dock = DockStyle.Fill;
-        _list.View = View.Details;
-        _list.FullRowSelect = true;
-        _list.MultiSelect = true;
-        _list.HideSelection = false;
-        _list.GridLines = true;
-        _list.Columns.Add("#", 34, HorizontalAlignment.Left);
-        _list.Columns.Add("X", 60, HorizontalAlignment.Right);
-        _list.Columns.Add("Y", 60, HorizontalAlignment.Right);
-        _list.Columns.Add("Z", 60, HorizontalAlignment.Right);
-        _list.Columns.Add("Width", 62, HorizontalAlignment.Right);
-        _list.Columns.Add("Bank", 62, HorizontalAlignment.Right);
-        _list.Columns.Add("Thickness", 70, HorizontalAlignment.Right);
-        controlPointsSection.Controls.Add(_list);
-
-        TableLayoutPanel controlPointInputs = new TableLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 60,
-            ColumnCount = 6,
-            RowCount = 2,
-            Padding = new Padding(0, 6, 0, 0)
-        };
-        for (int c = 0; c < 6; c++)
-        {
-            controlPointInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16.67f));
-        }
-
-        controlPointInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-        controlPointInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-
-        AddField(controlPointInputs, 0, "X", _numX);
-        AddField(controlPointInputs, 1, "Y", _numY);
-        AddField(controlPointInputs, 2, "Z", _numZ);
-        AddField(controlPointInputs, 3, "Width", _numWidth);
-        AddField(controlPointInputs, 4, "Bank", _numBank);
-        AddField(controlPointInputs, 5, "Thick", _numPointThickness);
-        _numPointThickness.Minimum = 0;
-        controlPointsSection.Controls.Add(controlPointInputs);
-
-        // Increment/Decrement interval section, docked below the editors.
-        GroupBox incrementIntervalSection = new GroupBox
-        {
-            Text = "Increment/Decrement interval",
-            Dock = DockStyle.Bottom,
-            Height = 74,
-            Padding = new Padding(6, 2, 6, 4)
-        };
-
-        TableLayoutPanel incrementIntervalInputs = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 5,
-            RowCount = 2,
-            Margin = new Padding(0)
-        };
-        for (int c = 0; c < 5; c++)
-        {
-            incrementIntervalInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
-        }
-
-        incrementIntervalInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        incrementIntervalInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
-
-        AddIncrementColumn(incrementIntervalInputs, 0, _chkIncX, _numIncX);
-        AddIncrementColumn(incrementIntervalInputs, 1, _chkIncY, _numIncY);
-        AddIncrementColumn(incrementIntervalInputs, 2, _chkIncZ, _numIncZ);
-        AddIncrementColumn(incrementIntervalInputs, 3, _chkIncWidth, _numIncWidth);
-        AddIncrementColumn(incrementIntervalInputs, 4, _chkIncBank, _numIncBank);
-
-        incrementIntervalSection.Controls.Add(incrementIntervalInputs);
-        controlPointsSection.Controls.Add(incrementIntervalSection);
-
-        GroupBox roadSettingsSection = new GroupBox
-        {
-            Text = "Road Settings",
-            Dock = DockStyle.Top,
-            Height = 315,
-            Padding = new Padding(6)
-        };
-
-        TableLayoutPanel roadSettingsInputs = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 135,
-            ColumnCount = 2,
-            RowCount = 5,
-            Padding = new Padding(0)
-        };
-        roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
-        roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int r = 0; r < 5; r++)
-        {
-            roadSettingsInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
-        }
-
-        _cboPower.Items.AddRange(new object[] { 2, 3, 4 });
-        _cboPower.DropDownStyle = ComboBoxStyle.DropDownList;
-        _cboPower.SelectedIndex = 1;
-
-        _cboSnap.Items.AddRange(new object[] { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 });
-        _cboSnap.DropDownStyle = ComboBoxStyle.DropDownList;
-        _cboSnap.SelectedIndex = 6; // 64
-
-        _cboLightmap.Items.AddRange(new object[] { 1, 2, 4, 8, 16, 32, 64, 128, 256 });
-        _cboLightmap.DropDownStyle = ComboBoxStyle.DropDownList;
-        _cboLightmap.SelectedIndex = 4; // 16
-
-        _txtMaterial.Text = _doc.Settings.Material;
-
-        AddSettingRow(roadSettingsInputs, 0, "Power", _cboPower);
-        AddSettingRow(roadSettingsInputs, 1, "Material", _txtMaterial);
-        AddSettingRow(roadSettingsInputs, 2, "Texture scale", _numTexScale);
-        _numTexScale.Increment = 0.25m;
-        AddSettingRow(roadSettingsInputs, 3, "Lightmap scale", _cboLightmap);
-        AddSettingRow(roadSettingsInputs, 4, "Grid snap", _cboSnap);
-
-        GroupBox solidRoadsSection = new GroupBox
-        {
-            Text = "Solid Roads",
-            Dock = DockStyle.Top,
-            Height = 52,
-            Padding = new Padding(6, 2, 6, 4)
-        };
-
-        FlowLayoutPanel solidRoadsCheckboxRow = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false
-        };
-
-        _chkSolidLeft.Text = "Left side";
-        _chkSolidLeft.AutoSize = true;
-        _chkSolidRight.Text = "Right side";
-        _chkSolidRight.AutoSize = true;
-        _chkSolidBottom.Text = "Bottom";
-        _chkSolidBottom.AutoSize = true;
-        solidRoadsCheckboxRow.Controls.Add(_chkSolidLeft);
-        solidRoadsCheckboxRow.Controls.Add(_chkSolidRight);
-        solidRoadsCheckboxRow.Controls.Add(_chkSolidBottom);
-        solidRoadsSection.Controls.Add(solidRoadsCheckboxRow);
-
-        // Optimization section: sits under Solid Roads inside Road Settings and
-        // replaces the old "Optimization scale" numeric field.
-        GroupBox optimizationSection = new GroupBox
-        {
-            Text = "Optimization",
-            Dock = DockStyle.Fill,
-            Padding = new Padding(6)
-        };
-
-        _chkShowDisps.Text = "See disps";
-        _chkShowDisps.AutoSize = true;
-        _chkShowDisps.Checked = false;
-
-        _chkShowSidewalkDisps.Text = "See sidewalk disps";
-        _chkShowSidewalkDisps.AutoSize = true;
-        _chkShowSidewalkDisps.Checked = false;
-
-        _lblDispCount.AutoSize = true;
-        _lblDispCount.ForeColor = Color.LightGray;
-        _lblDispCount.Margin = new Padding(12, 0, 0, 0);
-        _lblDispCount.Text = "0 disps";
-
-        FlowLayoutPanel optimizationToggleRow = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 26,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false
-        };
-        optimizationToggleRow.Controls.Add(_chkShowDisps);
-        optimizationToggleRow.Controls.Add(_chkShowSidewalkDisps);
-        optimizationToggleRow.Controls.Add(_lblDispCount);
-
-        FlowLayoutPanel optimizationStepRow = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 30,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            Padding = new Padding(0, 2, 0, 0)
-        };
-
-        _btnPrevOpt.AutoSize = true;
-        _btnPrevOpt.Margin = new Padding(0, 0, 4, 0);
-        _btnPrevOpt.Text = "◀ -";
-        _btnPrevOpt.Enabled = false;
-        StyleLayerButton(_btnPrevOpt);
-        _btnPrevOpt.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) StartOptRepeat(next: false); };
-        _btnPrevOpt.MouseUp += (s, e) => StopOptRepeat();
-
-        _btnNextOpt.AutoSize = true;
-        _btnNextOpt.Margin = new Padding(0, 0, 0, 0);
-        _btnNextOpt.Text = "- ▶";
-        _btnNextOpt.Enabled = false;
-        StyleLayerButton(_btnNextOpt);
-        _btnNextOpt.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) StartOptRepeat(next: true); };
-        _btnNextOpt.MouseUp += (s, e) => StopOptRepeat();
-
-        optimizationStepRow.Controls.Add(_btnPrevOpt);
-        optimizationStepRow.Controls.Add(_btnNextOpt);
-
-        optimizationSection.Controls.Add(optimizationStepRow);
-        optimizationSection.Controls.Add(optimizationToggleRow);
-
-        // Docking is applied in reverse z-order, so add in reverse of desired
-        // layout: table at the top, Solid Roads below it, Optimization filling
-        // the remainder.
-        roadSettingsSection.Controls.Add(optimizationSection);
-        roadSettingsSection.Controls.Add(solidRoadsSection);
-        roadSettingsSection.Controls.Add(roadSettingsInputs);
-
+        // Sections are built top-to-bottom to match the on-screen layout:
+        // Layers, Control Points, Road Settings, Edge Features. The final add
+        // block below adds them in reverse because docking stacks in reverse
+        // z-order (last added docks first).
         GroupBox layersSection = new GroupBox
         {
             Text = "Layers",
@@ -587,11 +368,183 @@ public sealed partial class MainWindow : Form
         layersSection.Controls.Add(_chkEnableJoining);
         layersSection.Controls.Add(layerActionRow);
 
+        GroupBox controlPointsSection = new GroupBox
+        {
+            Text = "Control Points",
+            Dock = DockStyle.Top,
+            Height = 325,
+            Padding = new Padding(6)
+        };
+
+        _list.Dock = DockStyle.Fill;
+        _list.View = View.Details;
+        _list.FullRowSelect = true;
+        _list.MultiSelect = true;
+        _list.HideSelection = false;
+        _list.GridLines = true;
+        _list.Columns.Add("#", 34, HorizontalAlignment.Left);
+        _list.Columns.Add("X", 60, HorizontalAlignment.Right);
+        _list.Columns.Add("Y", 60, HorizontalAlignment.Right);
+        _list.Columns.Add("Z", 60, HorizontalAlignment.Right);
+        _list.Columns.Add("Width", 62, HorizontalAlignment.Right);
+        _list.Columns.Add("Bank", 62, HorizontalAlignment.Right);
+        _list.Columns.Add("Thickness", 70, HorizontalAlignment.Right);
+        controlPointsSection.Controls.Add(_list);
+
+        TableLayoutPanel controlPointInputs = new TableLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 60,
+            ColumnCount = 6,
+            RowCount = 2,
+            Padding = new Padding(0, 6, 0, 0)
+        };
+        for (int c = 0; c < 6; c++)
+        {
+            controlPointInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16.67f));
+        }
+
+        controlPointInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+        controlPointInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+
+        AddField(controlPointInputs, 0, "X", _numX);
+        AddField(controlPointInputs, 1, "Y", _numY);
+        AddField(controlPointInputs, 2, "Z", _numZ);
+        AddField(controlPointInputs, 3, "Width", _numWidth);
+        AddField(controlPointInputs, 4, "Bank", _numBank);
+        AddField(controlPointInputs, 5, "Thick", _numPointThickness);
+        _numPointThickness.Minimum = 0;
+        controlPointsSection.Controls.Add(controlPointInputs);
+
+        // Increment/Decrement interval section, docked below the editors.
+        GroupBox incrementIntervalSection = new GroupBox
+        {
+            Text = "Increment/Decrement interval",
+            Dock = DockStyle.Bottom,
+            Height = 74,
+            Padding = new Padding(6, 2, 6, 4)
+        };
+
+        TableLayoutPanel incrementIntervalInputs = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 5,
+            RowCount = 2,
+            Margin = new Padding(0)
+        };
+        for (int c = 0; c < 5; c++)
+        {
+            incrementIntervalInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+        }
+
+        incrementIntervalInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        incrementIntervalInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+
+        AddIncrementColumn(incrementIntervalInputs, 0, _chkIncX, _numIncX);
+        AddIncrementColumn(incrementIntervalInputs, 1, _chkIncY, _numIncY);
+        AddIncrementColumn(incrementIntervalInputs, 2, _chkIncZ, _numIncZ);
+        AddIncrementColumn(incrementIntervalInputs, 3, _chkIncWidth, _numIncWidth);
+        AddIncrementColumn(incrementIntervalInputs, 4, _chkIncBank, _numIncBank);
+
+        incrementIntervalSection.Controls.Add(incrementIntervalInputs);
+        controlPointsSection.Controls.Add(incrementIntervalSection);
+
+        GroupBox roadSettingsSection = new GroupBox
+        {
+            Text = "Road Settings",
+            Dock = DockStyle.Top,
+            Height = 300,
+            Padding = new Padding(6)
+        };
+
+        TableLayoutPanel roadSettingsInputs = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 135,
+            ColumnCount = 2,
+            RowCount = 5,
+            Padding = new Padding(0)
+        };
+        roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int r = 0; r < 5; r++)
+        {
+            roadSettingsInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
+        }
+
+        _cboPower.Items.AddRange(new object[] { 2, 3, 4 });
+        _cboPower.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboPower.SelectedIndex = 1;
+
+        _cboSnap.Items.AddRange(new object[] { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 });
+        _cboSnap.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboSnap.SelectedIndex = 6; // 64
+
+        _cboLightmap.Items.AddRange(new object[] { 1, 2, 4, 8, 16, 32, 64, 128, 256 });
+        _cboLightmap.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboLightmap.SelectedIndex = 4; // 16
+
+        _txtMaterial.Text = _doc.Settings.Material;
+
+        AddSettingRow(roadSettingsInputs, 0, "Power", _cboPower);
+        AddSettingRow(roadSettingsInputs, 1, "Material", _txtMaterial);
+        AddSettingRow(roadSettingsInputs, 2, "Texture scale", _numTexScale);
+        _numTexScale.Increment = 0.25m;
+        AddSettingRow(roadSettingsInputs, 3, "Lightmap scale", _cboLightmap);
+        AddSettingRow(roadSettingsInputs, 4, "Grid snap", _cboSnap);
+
+        GroupBox solidRoadsSection = new GroupBox
+        {
+            Text = "Solid Roads",
+            Dock = DockStyle.Top,
+            Height = 52,
+            Padding = new Padding(6, 2, 6, 4)
+        };
+
+        FlowLayoutPanel solidRoadsCheckboxRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false
+        };
+
+        _chkSolidLeft.Text = "Left side";
+        _chkSolidLeft.AutoSize = true;
+        _chkSolidRight.Text = "Right side";
+        _chkSolidRight.AutoSize = true;
+        _chkSolidBottom.Text = "Bottom";
+        _chkSolidBottom.AutoSize = true;
+        solidRoadsCheckboxRow.Controls.Add(_chkSolidLeft);
+        solidRoadsCheckboxRow.Controls.Add(_chkSolidRight);
+        solidRoadsCheckboxRow.Controls.Add(_chkSolidBottom);
+        solidRoadsSection.Controls.Add(solidRoadsCheckboxRow);
+
+        // Optimization section: sits under Solid Roads inside Road Settings and
+        // replaces the old "Optimization scale" numeric field.
+        GroupBox optimizationSection = new GroupBox
+        {
+            Text = "Optimization",
+            Dock = DockStyle.Fill,
+            Padding = new Padding(6)
+        };
+
+        // Rows are added in reverse visual order because docking stacks in reverse
+        // z-order (last added docks first): step row (bottom) then toggle row (top).
+        optimizationSection.Controls.Add(BuildOptimizationStepRow());
+        optimizationSection.Controls.Add(BuildOptimizationToggleRow());
+
+        // Docking is applied in reverse z-order, so add in reverse of desired
+        // layout: table at the top, Solid Roads below it, Optimization filling
+        // the remainder.
+        roadSettingsSection.Controls.Add(optimizationSection);
+        roadSettingsSection.Controls.Add(solidRoadsSection);
+        roadSettingsSection.Controls.Add(roadSettingsInputs);
+
         GroupBox edgeFeaturesSection = new GroupBox
         {
             Text = "Edge Features",
             Dock = DockStyle.Top,
-            Height = 430,
+            Height = 500,
             Padding = new Padding(6)
         };
 
@@ -732,12 +685,77 @@ public sealed partial class MainWindow : Form
         return sidePanel;
     }
 
+    /// <summary>Builds the Optimization section's step row (the ◀ / ▶ buttons that
+    /// step through displacement counts) and wires their hold-to-repeat behaviour.</summary>
+    private FlowLayoutPanel BuildOptimizationStepRow()
+    {
+        FlowLayoutPanel stepRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 30,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0, 2, 0, 0)
+        };
+
+        _btnOptimizePrev.AutoSize = true;
+        _btnOptimizePrev.Margin = new Padding(0, 0, 4, 0);
+        _btnOptimizePrev.Text = "◀ -";
+        _btnOptimizePrev.Enabled = false;
+        StyleLayerButton(_btnOptimizePrev);
+        _btnOptimizePrev.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) StartOptRepeat(next: false); };
+        _btnOptimizePrev.MouseUp += (s, e) => StopOptRepeat();
+
+        _btnOptimizeNext.AutoSize = true;
+        _btnOptimizeNext.Margin = new Padding(0, 0, 0, 0);
+        _btnOptimizeNext.Text = "- ▶";
+        _btnOptimizeNext.Enabled = false;
+        StyleLayerButton(_btnOptimizeNext);
+        _btnOptimizeNext.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) StartOptRepeat(next: true); };
+        _btnOptimizeNext.MouseUp += (s, e) => StopOptRepeat();
+
+        stepRow.Controls.Add(_btnOptimizePrev);
+        stepRow.Controls.Add(_btnOptimizeNext);
+        return stepRow;
+    }
+
+    /// <summary>Builds the Optimization section's toggle row ("See disps" preview
+    /// toggles plus the live displacement count).</summary>
+    private FlowLayoutPanel BuildOptimizationToggleRow()
+    {
+        _chkShowDisps.Text = "See disps";
+        _chkShowDisps.AutoSize = true;
+        _chkShowDisps.Checked = false;
+
+        _chkShowSidewalkDisps.Text = "See sidewalk disps";
+        _chkShowSidewalkDisps.AutoSize = true;
+        _chkShowSidewalkDisps.Checked = false;
+
+        _lblDispCount.AutoSize = true;
+        _lblDispCount.ForeColor = Color.LightGray;
+        _lblDispCount.Margin = new Padding(12, 0, 0, 0);
+        _lblDispCount.Text = "0 disps";
+
+        FlowLayoutPanel toggleRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 26,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false
+        };
+        toggleRow.Controls.Add(_chkShowDisps);
+        toggleRow.Controls.Add(_chkShowSidewalkDisps);
+        toggleRow.Controls.Add(_lblDispCount);
+        return toggleRow;
+    }
+
     private void ConfigureIncrementControls()
     {
         // Seed the increment controls from the document defaults. Events are wired
         // later in WireEvents, so no handlers fire here yet.
         _loading = true;
         LoadIncrementsIntoControls();
+        LoadFeatureIncrementsIntoControls();
         _loading = false;
         UpdateIncrements();
     }
@@ -757,6 +775,21 @@ public sealed partial class MainWindow : Form
         _numIncBank.Value = (decimal)s.IncCustomBank;
     }
 
+    private void LoadFeatureIncrementsIntoControls()
+    {
+        RoadSettings s = _doc.Settings;
+        _chkFeatureIncOffset.Checked = s.FeatureIncUseGridOffset;
+        _chkFeatureIncWidth.Checked = s.FeatureIncUseGridWidth;
+        _chkFeatureIncBottomZ.Checked = s.FeatureIncUseGridBottomZ;
+        _chkFeatureIncTopZ.Checked = s.FeatureIncUseGridTopZ;
+        _chkFeatureIncBank.Checked = s.FeatureIncUseGridBank;
+        _numFeatureIncOffset.Value = (decimal)s.FeatureIncCustomOffset;
+        _numFeatureIncWidth.Value = (decimal)s.FeatureIncCustomWidth;
+        _numFeatureIncBottomZ.Value = (decimal)s.FeatureIncCustomBottomZ;
+        _numFeatureIncTopZ.Value = (decimal)s.FeatureIncCustomTopZ;
+        _numFeatureIncBank.Value = (decimal)s.FeatureIncCustomBank;
+    }
+
     private void ApplyIncrementsFromControls()
     {
         if (_loading)
@@ -764,6 +797,7 @@ public sealed partial class MainWindow : Form
             return;
         }
 
+        _undo.BeginSession();
         var s = _doc.Settings;
         s.IncUseGridX = _chkIncX.Checked;
         s.IncUseGridY = _chkIncY.Checked;
@@ -809,7 +843,21 @@ public sealed partial class MainWindow : Form
             return;
         }
 
+        _undo.BeginSession();
+        var s = _doc.Settings;
+        s.FeatureIncUseGridOffset = _chkFeatureIncOffset.Checked;
+        s.FeatureIncUseGridWidth = _chkFeatureIncWidth.Checked;
+        s.FeatureIncUseGridBottomZ = _chkFeatureIncBottomZ.Checked;
+        s.FeatureIncUseGridTopZ = _chkFeatureIncTopZ.Checked;
+        s.FeatureIncUseGridBank = _chkFeatureIncBank.Checked;
+        s.FeatureIncCustomOffset = (double)_numFeatureIncOffset.Value;
+        s.FeatureIncCustomWidth = (double)_numFeatureIncWidth.Value;
+        s.FeatureIncCustomBottomZ = (double)_numFeatureIncBottomZ.Value;
+        s.FeatureIncCustomTopZ = (double)_numFeatureIncTopZ.Value;
+        s.FeatureIncCustomBank = (double)_numFeatureIncBank.Value;
+
         UpdateIncrements();
+        _doc.NotifyChanged();
     }
 
     // ---------------------------------------------------------------- events
@@ -824,6 +872,7 @@ public sealed partial class MainWindow : Form
             _side.Invalidate();
             UpdatePreviewInfo();
             UpdateMergeButton();
+            UpdateUndoButtons();
 
             if (!_suppressDirty)
             {
@@ -935,6 +984,16 @@ public sealed partial class MainWindow : Form
         AttachUndoBatch(_chkFeatureBottom);
         AttachUndoBatch(_chkFeatureInner);
         AttachUndoBatch(_chkFeatureOuter);
+        AttachUndoBatch(_chkFeatureIncOffset);
+        AttachUndoBatch(_chkFeatureIncWidth);
+        AttachUndoBatch(_chkFeatureIncBottomZ);
+        AttachUndoBatch(_chkFeatureIncTopZ);
+        AttachUndoBatch(_chkFeatureIncBank);
+        AttachUndoBatch(_numFeatureIncOffset);
+        AttachUndoBatch(_numFeatureIncWidth);
+        AttachUndoBatch(_numFeatureIncBottomZ);
+        AttachUndoBatch(_numFeatureIncTopZ);
+        AttachUndoBatch(_numFeatureIncBank);
 
         _numX.ValueChanged += (s, e) => UpdatePointFromEditors();
         _numY.ValueChanged += (s, e) => UpdatePointFromEditors();
@@ -1004,8 +1063,16 @@ public sealed partial class MainWindow : Form
         AttachUndoBatch(_chkSolidLeft);
         AttachUndoBatch(_chkSolidRight);
         AttachUndoBatch(_chkSolidBottom);
+        AttachUndoBatch(_chkEnableJoining);
         AttachUndoBatch(_cboPower);
         AttachUndoBatch(_txtMaterial);
+
+        // Selection lists close any in-progress coalescing session (e.g. number-box
+        // increments), so editing one point then another stays as separate undo steps.
+        AttachUndoBatch(_lstLayers);
+        AttachUndoBatch(_list);
+        AttachUndoBatch(_lstFeatures);
+        AttachUndoBatch(_lstFeaturePoints);
     }
 
     // ---------------------------------------------------------------- data
@@ -1284,7 +1351,7 @@ public sealed partial class MainWindow : Form
             return;
         }
 
-        _undo.RecordSingle();
+        _undo.BeginChange();
         _doc.ActiveTrack.EnableJoining = _chkEnableJoining.Checked;
         _doc.NotifyChanged();
         UpdateUndoButtons();
@@ -1332,6 +1399,7 @@ public sealed partial class MainWindow : Form
         Track activeTrack = _doc.ActiveTrack;
         if (activeTrack == null)
         {
+            UpdateFeatureEditorEnabled();
             return;
         }
 
@@ -1354,6 +1422,7 @@ public sealed partial class MainWindow : Form
             _chkFeatureOuter.Checked = true;
             _lstFeaturePoints.Items.Clear();
             _loading = false;
+            UpdateFeatureEditorEnabled();
             return;
         }
 
@@ -1371,6 +1440,7 @@ public sealed partial class MainWindow : Form
 
         RefreshFeaturePointTable(feature);
         LoadFeaturePointIntoEditors();
+        UpdateFeatureEditorEnabled();
     }
 
     private void RefreshFeaturePointTable(EdgeFeature feature)
@@ -1440,6 +1510,7 @@ public sealed partial class MainWindow : Form
             return;
         }
 
+        _undo.BeginChange();
         EdgeFeature feature = _doc.ActiveTrack.EdgeFeatures[index];
         feature.Kind = (EdgeFeatureKind)_cboFeatureKind.SelectedIndex;
         feature.LeftSide = _cboFeatureSide.SelectedIndex == 0;
@@ -1472,6 +1543,8 @@ public sealed partial class MainWindow : Form
         {
             return;
         }
+
+        _undo.BeginSession();
 
         // Width/bottom/top/bank are applied as absolute values across the whole
         // selection, matching the road point editor's width/bank behaviour.
@@ -1514,6 +1587,57 @@ public sealed partial class MainWindow : Form
         return result;
     }
 
+    /// <summary>True when a feature is actually selected (and the active track has
+    /// one), so the per-feature property editor is usable.</summary>
+    private bool HasSelectedFeature()
+    {
+        Track activeTrack = _doc.ActiveTrack;
+        if (activeTrack == null)
+        {
+            return false;
+        }
+
+        int index = _lstFeatures.SelectedIndex;
+        return index >= 0 && index < activeTrack.EdgeFeatures.Count;
+    }
+
+    /// <summary>Gray out every edge-feature property control when there is no
+    /// feature to edit yet. Kind, Side and "+ Add" always stay enabled so the user
+    /// can choose what kind of feature to add before it exists.</summary>
+    private void UpdateFeatureEditorEnabled()
+    {
+        bool enabled = HasSelectedFeature();
+
+        _numFeatureOffset.Enabled = enabled;
+        _numFeatureWidth.Enabled = enabled;
+        _numFeatureBottomZ.Enabled = enabled;
+        _numFeatureTopZ.Enabled = enabled;
+        _numFeatureBank.Enabled = enabled;
+        _txtFeatureMaterial.Enabled = enabled;
+        _chkFeatureBottom.Enabled = enabled;
+        _chkFeatureInner.Enabled = enabled;
+        _chkFeatureOuter.Enabled = enabled;
+
+        _chkFeatureIncOffset.Enabled = enabled;
+        _chkFeatureIncWidth.Enabled = enabled;
+        _chkFeatureIncBottomZ.Enabled = enabled;
+        _chkFeatureIncTopZ.Enabled = enabled;
+        _chkFeatureIncBank.Enabled = enabled;
+        _numFeatureIncOffset.Enabled = enabled;
+        _numFeatureIncWidth.Enabled = enabled;
+        _numFeatureIncBottomZ.Enabled = enabled;
+        _numFeatureIncTopZ.Enabled = enabled;
+        _numFeatureIncBank.Enabled = enabled;
+
+        _lstFeaturePoints.Enabled = enabled;
+        _btnRemoveFeature.Enabled = enabled;
+
+        // Kind, Side and "+ Add" are always usable.
+        _cboFeatureKind.Enabled = true;
+        _cboFeatureSide.Enabled = true;
+        _btnAddFeature.Enabled = _doc.ActiveTrack != null;
+    }
+
     private void AddFeature()
     {
         if (_doc.ActiveTrack == null)
@@ -1522,7 +1646,11 @@ public sealed partial class MainWindow : Form
         }
 
         _undo.RecordSingle();
-        EdgeFeature feature = new EdgeFeature();
+        EdgeFeature feature = new EdgeFeature
+        {
+            Kind = (EdgeFeatureKind)_cboFeatureKind.SelectedIndex,
+            LeftSide = _cboFeatureSide.SelectedIndex == 0
+        };
         double topOffset = _doc.ActiveTrack.Settings.Snap > 0 ? _doc.ActiveTrack.Settings.Snap : 64;
         foreach (RoadPoint roadPoint in _doc.ActiveTrack.Points)
         {
@@ -2055,6 +2183,8 @@ public sealed partial class MainWindow : Form
             return;
         }
 
+        _undo.BeginSession();
+
         // Position edits are applied as a delta (moves the group together);
         // width/bank are applied as absolute values across the selection.
         double dx = (double)_numX.Value - _prevX;
@@ -2208,24 +2338,28 @@ public sealed partial class MainWindow : Form
 
     private void DoUndo()
     {
-        if (!_undo.CanUndo)
+        if (_undo.Undo())
         {
-            return;
+            AfterUndoRedo();
         }
-
-        _undo.Undo();
-        AfterUndoRedo();
+        else
+        {
+            // Nothing was undone (e.g. an open batch whose net change is zero, like
+            // a checkbox toggled twice). Just re-sync the button state.
+            UpdateUndoButtons();
+        }
     }
 
     private void DoRedo()
     {
-        if (!_undo.CanRedo)
+        if (_undo.Redo())
         {
-            return;
+            AfterUndoRedo();
         }
-
-        _undo.Redo();
-        AfterUndoRedo();
+        else
+        {
+            UpdateUndoButtons();
+        }
     }
 
     private void AfterUndoRedo()
@@ -2279,6 +2413,7 @@ public sealed partial class MainWindow : Form
             return;
         }
 
+        _undo.BeginChange();
         RoadSettings settings = _doc.Settings;
         settings.Power = (int)_cboPower.SelectedItem;
         settings.Material = _txtMaterial.Text;
@@ -2371,6 +2506,7 @@ public sealed partial class MainWindow : Form
         _chkSolidRight.Checked = settings.SolidRight;
         _chkSolidBottom.Checked = settings.SolidBottom;
         LoadIncrementsIntoControls();
+        LoadFeatureIncrementsIntoControls();
         _loading = false;
         UpdateIncrements();
     }
@@ -2390,17 +2526,17 @@ public sealed partial class MainWindow : Form
         int count = _doc.Points.Count >= 2 ? SegmentLayout.CountSegments(_doc.Points, _doc.Settings.SegmentLength, ActiveTrackClosed) : 0;
         _lblDispCount.Text = $"{count} disps";
 
-        if (_btnNextOpt == null || _btnPrevOpt == null)
+        if (_btnOptimizeNext == null || _btnOptimizePrev == null)
         {
             return;
         }
 
         if (_doc.Points.Count < 2)
         {
-            _btnNextOpt.Text = "- ▶";
-            _btnNextOpt.Enabled = false;
-            _btnPrevOpt.Text = "◀ -";
-            _btnPrevOpt.Enabled = false;
+            _btnOptimizeNext.Text = "- ▶";
+            _btnOptimizeNext.Enabled = false;
+            _btnOptimizePrev.Text = "◀ -";
+            _btnOptimizePrev.Enabled = false;
             return;
         }
 
@@ -2409,27 +2545,27 @@ public sealed partial class MainWindow : Form
         double next = SegmentLayout.NextBreakpoint(_doc.Points, current, out int nextCount, ActiveTrackClosed);
         if (next > current && nextCount < count)
         {
-            _btnNextOpt.Text = $"{nextCount} disps ▶";
-            _btnNextOpt.Enabled = true;
-            _tooltipManager.Attach(_btnNextOpt, $"Fewer displacements: {nextCount} at scale {Math.Ceiling(next * 100) / 100:0.##}");
+            _btnOptimizeNext.Text = $"{nextCount} disps ▶";
+            _btnOptimizeNext.Enabled = true;
+            _tooltipManager.Attach(_btnOptimizeNext, $"Fewer displacements: {nextCount} at scale {Math.Ceiling(next * 100) / 100:0.##}");
         }
         else
         {
-            _btnNextOpt.Text = "Fully optimized";
-            _btnNextOpt.Enabled = false;
+            _btnOptimizeNext.Text = "Fully optimized";
+            _btnOptimizeNext.Enabled = false;
         }
 
         double prev = SegmentLayout.PreviousBreakpoint(_doc.Points, current, out int prevCount, ActiveTrackClosed);
         if (prev < current && prevCount > count)
         {
-            _btnPrevOpt.Text = $"◀ {prevCount} disps";
-            _btnPrevOpt.Enabled = true;
-            _tooltipManager.Attach(_btnPrevOpt, $"More displacements: {prevCount} at scale {Math.Floor(prev * 100) / 100:0.##}");
+            _btnOptimizePrev.Text = $"◀ {prevCount} disps";
+            _btnOptimizePrev.Enabled = true;
+            _tooltipManager.Attach(_btnOptimizePrev, $"More displacements: {prevCount} at scale {Math.Floor(prev * 100) / 100:0.##}");
         }
         else
         {
-            _btnPrevOpt.Text = "◀ Max";
-            _btnPrevOpt.Enabled = false;
+            _btnOptimizePrev.Text = "◀ Max";
+            _btnOptimizePrev.Enabled = false;
         }
     }
 

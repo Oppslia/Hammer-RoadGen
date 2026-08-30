@@ -74,6 +74,20 @@ public sealed class RoadSettings
     public double IncCustomWidth = 64;
     public double IncCustomBank = 4;
 
+    // Edge-feature editor increment/decrement interval settings, mirroring the road
+    // point editor's Inc* fields above. Each feature value row (Offset, Width,
+    // Bottom Z, Top Z, Bank) has its own "Grid" toggle and custom interval.
+    public bool FeatureIncUseGridOffset = true;
+    public bool FeatureIncUseGridWidth = true;
+    public bool FeatureIncUseGridBottomZ = true;
+    public bool FeatureIncUseGridTopZ = true;
+    public bool FeatureIncUseGridBank = false;
+    public double FeatureIncCustomOffset = 64;
+    public double FeatureIncCustomWidth = 64;
+    public double FeatureIncCustomBottomZ = 64;
+    public double FeatureIncCustomTopZ = 64;
+    public double FeatureIncCustomBank = 4;
+
     /// <summary>Snap a value to the configured grid.</summary>
     public double Snapped(double value)
     {
@@ -109,7 +123,17 @@ public sealed class RoadSettings
             IncCustomY = IncCustomY,
             IncCustomZ = IncCustomZ,
             IncCustomWidth = IncCustomWidth,
-            IncCustomBank = IncCustomBank
+            IncCustomBank = IncCustomBank,
+            FeatureIncUseGridOffset = FeatureIncUseGridOffset,
+            FeatureIncUseGridWidth = FeatureIncUseGridWidth,
+            FeatureIncUseGridBottomZ = FeatureIncUseGridBottomZ,
+            FeatureIncUseGridTopZ = FeatureIncUseGridTopZ,
+            FeatureIncUseGridBank = FeatureIncUseGridBank,
+            FeatureIncCustomOffset = FeatureIncCustomOffset,
+            FeatureIncCustomWidth = FeatureIncCustomWidth,
+            FeatureIncCustomBottomZ = FeatureIncCustomBottomZ,
+            FeatureIncCustomTopZ = FeatureIncCustomTopZ,
+            FeatureIncCustomBank = FeatureIncCustomBank
         };
 
         return copy;

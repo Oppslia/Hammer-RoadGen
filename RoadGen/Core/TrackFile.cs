@@ -33,7 +33,7 @@ namespace RoadGen.Core;
 public static class TrackFile
 {
     /// <summary>The version this build writes to disk. Bump whenever the format changes.</summary>
-    public const int CurrentVersion = 7;
+    public const int CurrentVersion = 8;
 
     /// <summary>One entry per historical version gap. Index 0 migrates v1->v2,
     /// index 1 migrates v2->v3, and so on.</summary>
@@ -44,8 +44,9 @@ public static class TrackFile
         Migrate3To4,
         Migrate4To5,
         Migrate5To6,
-        Migrate6To7
-        // Migrate7To8, ... append future migrations here.
+        Migrate6To7,
+        Migrate7To8
+        // Migrate8To9, ... append future migrations here.
     };
 
     public sealed class TrackLoadResult
@@ -118,6 +119,16 @@ public static class TrackFile
         public double IncCustomZ { get; set; } = 64;
         public double IncCustomWidth { get; set; } = 64;
         public double IncCustomBank { get; set; } = 4;
+        public bool FeatureIncUseGridOffset { get; set; } = true;
+        public bool FeatureIncUseGridWidth { get; set; } = true;
+        public bool FeatureIncUseGridBottomZ { get; set; } = true;
+        public bool FeatureIncUseGridTopZ { get; set; } = true;
+        public bool FeatureIncUseGridBank { get; set; } = false;
+        public double FeatureIncCustomOffset { get; set; } = 64;
+        public double FeatureIncCustomWidth { get; set; } = 64;
+        public double FeatureIncCustomBottomZ { get; set; } = 64;
+        public double FeatureIncCustomTopZ { get; set; } = 64;
+        public double FeatureIncCustomBank { get; set; } = 4;
     }
 
     private sealed class PointData
@@ -165,7 +176,17 @@ public static class TrackFile
                     IncCustomY = track.Settings.IncCustomY,
                     IncCustomZ = track.Settings.IncCustomZ,
                     IncCustomWidth = track.Settings.IncCustomWidth,
-                    IncCustomBank = track.Settings.IncCustomBank
+                    IncCustomBank = track.Settings.IncCustomBank,
+                    FeatureIncUseGridOffset = track.Settings.FeatureIncUseGridOffset,
+                    FeatureIncUseGridWidth = track.Settings.FeatureIncUseGridWidth,
+                    FeatureIncUseGridBottomZ = track.Settings.FeatureIncUseGridBottomZ,
+                    FeatureIncUseGridTopZ = track.Settings.FeatureIncUseGridTopZ,
+                    FeatureIncUseGridBank = track.Settings.FeatureIncUseGridBank,
+                    FeatureIncCustomOffset = track.Settings.FeatureIncCustomOffset,
+                    FeatureIncCustomWidth = track.Settings.FeatureIncCustomWidth,
+                    FeatureIncCustomBottomZ = track.Settings.FeatureIncCustomBottomZ,
+                    FeatureIncCustomTopZ = track.Settings.FeatureIncCustomTopZ,
+                    FeatureIncCustomBank = track.Settings.FeatureIncCustomBank
                 }
             };
 
@@ -357,6 +378,16 @@ public static class TrackFile
         settings.IncCustomZ = data.IncCustomZ;
         settings.IncCustomWidth = data.IncCustomWidth;
         settings.IncCustomBank = data.IncCustomBank;
+        settings.FeatureIncUseGridOffset = data.FeatureIncUseGridOffset;
+        settings.FeatureIncUseGridWidth = data.FeatureIncUseGridWidth;
+        settings.FeatureIncUseGridBottomZ = data.FeatureIncUseGridBottomZ;
+        settings.FeatureIncUseGridTopZ = data.FeatureIncUseGridTopZ;
+        settings.FeatureIncUseGridBank = data.FeatureIncUseGridBank;
+        settings.FeatureIncCustomOffset = data.FeatureIncCustomOffset;
+        settings.FeatureIncCustomWidth = data.FeatureIncCustomWidth;
+        settings.FeatureIncCustomBottomZ = data.FeatureIncCustomBottomZ;
+        settings.FeatureIncCustomTopZ = data.FeatureIncCustomTopZ;
+        settings.FeatureIncCustomBank = data.FeatureIncCustomBank;
     }
 
     private static EdgeFeatureKind ParseEdgeFeatureKind(string value)
@@ -521,6 +552,42 @@ public static class TrackFile
                 double snap = s["Snap"]?.GetValue<double>() ?? 64;
                 s["SnapEnabled"] = snap > 0;
             }
+        }
+    }
+
+    /// <summary>v7 -> v8: adds the edge-feature editor increment/decrement interval
+    /// settings (a "Grid" toggle and custom interval per feature value row). Old
+    /// files used the standard grid/custom defaults, so seed the same values here.
+    /// </summary>
+    private static void Migrate7To8(JsonObject root)
+    {
+        if (root["Tracks"] is not JsonArray tracks)
+        {
+            return;
+        }
+
+        foreach (JsonNode trackNode in tracks)
+        {
+            if (trackNode is not JsonObject track)
+            {
+                continue;
+            }
+
+            if (track["Settings"] is not JsonObject s)
+            {
+                continue;
+            }
+
+            if (s["FeatureIncUseGridOffset"] == null) s["FeatureIncUseGridOffset"] = true;
+            if (s["FeatureIncUseGridWidth"] == null) s["FeatureIncUseGridWidth"] = true;
+            if (s["FeatureIncUseGridBottomZ"] == null) s["FeatureIncUseGridBottomZ"] = true;
+            if (s["FeatureIncUseGridTopZ"] == null) s["FeatureIncUseGridTopZ"] = true;
+            if (s["FeatureIncUseGridBank"] == null) s["FeatureIncUseGridBank"] = false;
+            if (s["FeatureIncCustomOffset"] == null) s["FeatureIncCustomOffset"] = 64.0;
+            if (s["FeatureIncCustomWidth"] == null) s["FeatureIncCustomWidth"] = 64.0;
+            if (s["FeatureIncCustomBottomZ"] == null) s["FeatureIncCustomBottomZ"] = 64.0;
+            if (s["FeatureIncCustomTopZ"] == null) s["FeatureIncCustomTopZ"] = 64.0;
+            if (s["FeatureIncCustomBank"] == null) s["FeatureIncCustomBank"] = 4.0;
         }
     }
 }
