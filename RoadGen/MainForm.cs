@@ -12,6 +12,13 @@ public sealed class MainForm : Form
     private readonly UndoManager _undo;
     private ToolStripButton _btnUndo;
     private ToolStripButton _btnRedo;
+    private readonly ToolStripComboBox _gridCombo = new ToolStripComboBox();
+    private readonly ToolStripButton _btnSnap = new ToolStripButton("Snap on")
+    {
+        CheckOnClick = true,
+        Checked = true
+    };
+    private bool _syncingGrid;
 
     private readonly Viewport3D _v3d = new Viewport3D();
     private readonly Viewport2D _top = new Viewport2D();
@@ -164,6 +171,19 @@ public sealed class MainForm : Form
         strip.Items.Add(ToolButton("Move Down", (s, e) => MovePoint(1)));
         strip.Items.Add(new ToolStripSeparator());
         strip.Items.Add(ToolButton("Frame All", (s, e) => FrameAll()));
+
+        // Hammer-style grid controls: an interval (HU) dropdown plus a snap-to-grid
+        // toggle. The dropdown mirrors the side-panel "Grid snap" setting.
+        strip.Items.Add(new ToolStripSeparator());
+        _gridCombo.Items.AddRange(new object[] { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024 });
+        _gridCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _gridCombo.SelectedIndex = 6; // 64
+        _gridCombo.ToolTipText = "Grid interval (HU)";
+        _btnSnap.ToolTipText = "Toggle snapping to the grid";
+        strip.Items.Add(_btnSnap);
+        strip.Items.Add(new ToolStripLabel("Grid:"));
+        strip.Items.Add(_gridCombo);
+
         strip.Items.Add(new ToolStripSeparator());
         _btnUndo = ToolButton("Undo", (s, e) => DoUndo());
         _btnRedo = ToolButton("Redo", (s, e) => DoRedo());
@@ -1116,6 +1136,8 @@ public sealed class MainForm : Form
         _numTexScale.ValueChanged += (s, e) => ApplySettingsFromControls();
         _cboLightmap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _cboSnap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
+        _gridCombo.SelectedIndexChanged += (s, e) => ApplyGridCombo();
+        _btnSnap.CheckedChanged += (s, e) => ApplySnapToggle();
         _chkSolidLeft.CheckedChanged += (s, e) => ApplySettingsFromControls();
         _chkSolidRight.CheckedChanged += (s, e) => ApplySettingsFromControls();
         _chkSolidBottom.CheckedChanged += (s, e) => ApplySettingsFromControls();
@@ -2460,8 +2482,53 @@ public sealed class MainForm : Form
         s.SolidLeft = _chkSolidLeft.Checked;
         s.SolidRight = _chkSolidRight.Checked;
         s.SolidBottom = _chkSolidBottom.Checked;
+        SyncGridCombo();
         UpdateIncrements();
         _doc.NotifyChanged();
+    }
+
+    // The toolbar grid dropdown just mirrors the side-panel "Grid snap" dropdown, so
+    // picking an interval there sets _cboSnap, which applies the setting as usual.
+    private void ApplyGridCombo()
+    {
+        if (_loading || _syncingGrid || _gridCombo.SelectedIndex < 0)
+        {
+            return;
+        }
+
+        _syncingGrid = true;
+        _cboSnap.SelectedIndex = _gridCombo.SelectedIndex;
+        _syncingGrid = false;
+    }
+
+    private void ApplySnapToggle()
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        _btnSnap.Text = _btnSnap.Checked ? "Snap on" : "Snap off";
+        _undo.RecordSingle();
+        _doc.Settings.SnapEnabled = _btnSnap.Checked;
+        _doc.NotifyChanged();
+        UpdateUndoButtons();
+    }
+
+    private void SyncGridCombo()
+    {
+        if (_syncingGrid)
+        {
+            return;
+        }
+
+        int index = SnapIndex(_doc.Settings.Snap);
+        if (index >= 0 && index < _gridCombo.Items.Count && _gridCombo.SelectedIndex != index)
+        {
+            _syncingGrid = true;
+            _gridCombo.SelectedIndex = index;
+            _syncingGrid = false;
+        }
     }
 
     private void LoadPointIntoEditors()
@@ -2491,6 +2558,9 @@ public sealed class MainForm : Form
         _numTexScale.Value = (decimal)s.TextureScale;
         _cboLightmap.SelectedIndex = LightmapIndex(s.LightmapScale);
         _cboSnap.SelectedIndex = SnapIndex(s.Snap);
+        _btnSnap.Checked = s.SnapEnabled;
+        _btnSnap.Text = s.SnapEnabled ? "Snap on" : "Snap off";
+        SyncGridCombo();
         _chkSolidLeft.Checked = s.SolidLeft;
         _chkSolidRight.Checked = s.SolidRight;
         _chkSolidBottom.Checked = s.SolidBottom;

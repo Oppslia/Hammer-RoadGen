@@ -33,7 +33,7 @@ namespace RoadGen.Core;
 public static class TrackFile
 {
     /// <summary>The version this build writes to disk. Bump whenever the format changes.</summary>
-    public const int CurrentVersion = 6;
+    public const int CurrentVersion = 7;
 
     /// <summary>One entry per historical version gap. Index 0 migrates v1->v2,
     /// index 1 migrates v2->v3, and so on.</summary>
@@ -43,8 +43,9 @@ public static class TrackFile
         Migrate2To3,
         Migrate3To4,
         Migrate4To5,
-        Migrate5To6
-        // Migrate6To7, ... append future migrations here.
+        Migrate5To6,
+        Migrate6To7
+        // Migrate7To8, ... append future migrations here.
     };
 
     public sealed class TrackLoadResult
@@ -105,7 +106,8 @@ public static class TrackFile
         public double SegmentLength { get; set; }
         public double TextureScale { get; set; }
         public int LightmapScale { get; set; }
-        public double Snap { get; set; }
+        public double Snap { get; set; } = 64;
+        public bool SnapEnabled { get; set; } = true;
         public bool IncUseGridX { get; set; } = true;
         public bool IncUseGridY { get; set; } = true;
         public bool IncUseGridZ { get; set; } = true;
@@ -153,6 +155,7 @@ public static class TrackFile
                     TextureScale = track.Settings.TextureScale,
                     LightmapScale = track.Settings.LightmapScale,
                     Snap = track.Settings.Snap,
+                    SnapEnabled = track.Settings.SnapEnabled,
                     IncUseGridX = track.Settings.IncUseGridX,
                     IncUseGridY = track.Settings.IncUseGridY,
                     IncUseGridZ = track.Settings.IncUseGridZ,
@@ -343,6 +346,7 @@ public static class TrackFile
         settings.TextureScale = data.TextureScale;
         settings.LightmapScale = data.LightmapScale;
         settings.Snap = data.Snap;
+        settings.SnapEnabled = data.SnapEnabled;
         settings.IncUseGridX = data.IncUseGridX;
         settings.IncUseGridY = data.IncUseGridY;
         settings.IncUseGridZ = data.IncUseGridZ;
@@ -491,5 +495,32 @@ public static class TrackFile
     private static void Migrate5To6(JsonObject root)
     {
         // Enabled is a new optional field; no structural change is needed.
+    }
+
+    /// <summary>v6 -> v7: adds the SnapEnabled flag. Old files default to snapping
+    /// enabled (they always snapped to their configured grid), so set it true when
+    /// the key is absent.</summary>
+    private static void Migrate6To7(JsonObject root)
+    {
+        if (root["Tracks"] is not JsonArray tracks)
+        {
+            return;
+        }
+
+        foreach (JsonNode trackNode in tracks)
+        {
+            if (trackNode is not JsonObject track)
+            {
+                continue;
+            }
+
+            if (track["Settings"] is JsonObject s && s["SnapEnabled"] == null)
+            {
+                // Old files always snapped to their configured grid when Snap > 0;
+                // Snap == 0 was the old way to disable snapping.
+                double snap = s["Snap"]?.GetValue<double>() ?? 64;
+                s["SnapEnabled"] = snap > 0;
+            }
+        }
     }
 }

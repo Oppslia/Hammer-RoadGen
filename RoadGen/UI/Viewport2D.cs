@@ -256,8 +256,14 @@ public sealed class Viewport2D : Control
         double minY = Math.Min(top, bottom);
         double maxY = Math.Max(top, bottom);
 
-        // Avoid drawing absurd numbers of lines when zoomed way out.
-        while ((maxX - minX) / snap > 250)
+        // Keep the grid glued to the configured size (snap) so it behaves like a
+        // stable world-space lattice (Hammer-style) instead of re-scaling to the
+        // current perspective as you zoom. Only coarsen the spacing when the line
+        // count would be absurd (very far zoom-out, where the lines are sub-pixel
+        // anyway), rather than doubling at a modest cell count.
+        double span = Math.Max(maxX - minX, maxY - minY);
+        const int maxLines = 2000;
+        while (span / snap > maxLines)
         {
             snap *= 2;
         }
@@ -742,12 +748,57 @@ public sealed class Viewport2D : Control
             return;
         }
 
+        // Snap the box corners to the grid (when snapping is enabled), so the
+        // selection window follows the snap setting like the point tool does.
+        GetBoxWorldBounds(out double hMin, out double hMax, out double vMin, out double vMax);
+
         using Pen pen = new Pen(Color.FromArgb(220, 220, 230))
         {
             DashStyle = DashStyle.Dash
         };
-        g.DrawRectangle(pen, RectangleFromPoints(_boxStart, _boxCurrent));
+
+        PointF tl = WorldToScreenF(PlaneVec(hMin, vMax, 0));
+        PointF br = WorldToScreenF(PlaneVec(hMax, vMin, 0));
+        g.DrawRectangle(pen, RectangleF.FromLTRB(tl.X, tl.Y, br.X, br.Y));
+
+        // Show the selection's world size next to the box.
+        double width = Math.Abs(hMax - hMin);
+        double height = Math.Abs(vMax - vMin);
+        (string hLabel, string vLabel) = PlaneLabels();
+        string size = $"{hLabel}: {width:0.#}  {vLabel}: {height:0.#}";
+
+        using Font f = new Font("Segoe UI", 8);
+        SizeF textSize = g.MeasureString(size, f);
+        PointF labelAt = new PointF(tl.X, tl.Y - textSize.Height - 3);
+        using Brush bg = new SolidBrush(Color.FromArgb(180, 24, 24, 28));
+        g.FillRectangle(bg, labelAt.X, labelAt.Y, textSize.Width + 6, textSize.Height + 4);
+        using Brush text = new SolidBrush(Color.FromArgb(235, 235, 240));
+        g.DrawString(size, f, text, labelAt.X + 3, labelAt.Y + 2);
     }
+
+    /// <summary>World-space bounds of the current box selection, with the corners
+    /// snapped to the grid when snapping is enabled.</summary>
+    private void GetBoxWorldBounds(out double hMin, out double hMax, out double vMin, out double vMax)
+    {
+        double outOfPlane = GetDefaultOutOfPlane();
+        Vec3 a = Snap(ScreenToWorld(_boxStart, outOfPlane));
+        Vec3 b = Snap(ScreenToWorld(_boxCurrent, outOfPlane));
+        double ah = PlaneHorizontal(a);
+        double av = PlaneVertical(a);
+        double bh = PlaneHorizontal(b);
+        double bv = PlaneVertical(b);
+        hMin = Math.Min(ah, bh);
+        hMax = Math.Max(ah, bh);
+        vMin = Math.Min(av, bv);
+        vMax = Math.Max(av, bv);
+    }
+
+    private (string h, string v) PlaneLabels() => _plane switch
+    {
+        PlaneKind.Top => ("X", "Y"),
+        PlaneKind.Front => ("X", "Z"),
+        _ => ("Y", "Z")
+    };
 
     // ----- world/screen mapping -----
 
@@ -1015,7 +1066,7 @@ public sealed class Viewport2D : Control
 
             if (_boxSelecting)
             {
-                var indices = PointsInBox(RectangleFromPoints(_boxStart, _boxCurrent));
+                var indices = PointsInBox();
                 BoxSelected?.Invoke(indices, (ModifierKeys & Keys.Control) != 0);
             }
             else if ((ModifierKeys & Keys.Control) != 0)
@@ -1078,7 +1129,7 @@ public sealed class Viewport2D : Control
         return index >= 0;
     }
 
-    private List<int> PointsInBox(Rectangle r)
+    private List<int> PointsInBox()
     {
         var result = new List<int>();
         if (_doc == null)
@@ -1086,23 +1137,18 @@ public sealed class Viewport2D : Control
             return result;
         }
 
+        GetBoxWorldBounds(out double hMin, out double hMax, out double vMin, out double vMax);
         for (int i = 0; i < _doc.Points.Count; i++)
         {
-            PointF s = WorldToScreenF(_doc.Points[i].Position);
-            if (r.Contains((int)s.X, (int)s.Y))
+            double h = PlaneHorizontal(_doc.Points[i].Position);
+            double v = PlaneVertical(_doc.Points[i].Position);
+            if (h >= hMin && h <= hMax && v >= vMin && v <= vMax)
             {
                 result.Add(i);
             }
         }
 
         return result;
-    }
-
-    private static Rectangle RectangleFromPoints(Point a, Point b)
-    {
-        int x = Math.Min(a.X, b.X);
-        int y = Math.Min(a.Y, b.Y);
-        return new Rectangle(x, y, Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
     }
 
     private double GetDefaultOutOfPlane()

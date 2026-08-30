@@ -56,6 +56,10 @@ public sealed class RoadSettings
     /// <summary>Editor grid snap in units. 0 disables snapping.</summary>
     public double Snap = 64;
 
+    /// <summary>Whether point placement snaps to the grid. Kept separate from
+    /// <see cref="Snap"/> so the grid interval is preserved when snapping is off.</summary>
+    public bool SnapEnabled = true;
+
     // Per-editor increment/decrement interval settings (editor UI only, not part
     // of the exported VMF). UseGrid = "Grid" box checked (increment follows the
     // grid snap); otherwise the custom value below is used.
@@ -73,7 +77,7 @@ public sealed class RoadSettings
     /// <summary>Snap a value to the configured grid.</summary>
     public double Snapped(double value)
     {
-        if (Snap <= 0)
+        if (!SnapEnabled || Snap <= 0)
         {
             return value;
         }
@@ -95,6 +99,7 @@ public sealed class RoadSettings
             TextureScale = TextureScale,
             LightmapScale = LightmapScale,
             Snap = Snap,
+            SnapEnabled = SnapEnabled,
             IncUseGridX = IncUseGridX,
             IncUseGridY = IncUseGridY,
             IncUseGridZ = IncUseGridZ,
