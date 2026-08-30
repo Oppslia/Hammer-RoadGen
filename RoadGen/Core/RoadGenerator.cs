@@ -57,27 +57,12 @@ public static class RoadGenerator
             return;
         }
 
-        int power = Math.Clamp(chain.Settings.Power, 2, 4);
-        int resolution = 1 << power;
-        double maxSegment = Math.Max(1.0, chain.Settings.SegmentLength);
         Vec3 up = new Vec3(0, 0, 1);
         double twist = ClosedLoopTwistOf(chain);
 
         foreach (ChainFeature chainFeature in features)
         {
             EdgeFeature feature = chainFeature.Feature;
-            RoadSettings featureSettings = new RoadSettings
-            {
-                Material = feature.Material,
-                TextureScale = chain.Settings.TextureScale,
-                LightmapScale = chain.Settings.LightmapScale,
-                Power = power,
-                // A left strip stores its columns outer-first, so the builder's
-                // "left wall" (column 0) is actually the outer face and vice versa.
-                SolidLeft = feature.LeftSide ? feature.SolidOuter : feature.SolidInner,
-                SolidRight = feature.LeftSide ? feature.SolidInner : feature.SolidOuter,
-                SolidBottom = feature.SolidBottom
-            };
 
             double sign = feature.LeftSide ? -1.0 : 1.0;
             FrameWalker walker = new FrameWalker();
@@ -85,6 +70,29 @@ public static class RoadGenerator
 
             for (int segmentIndex = 0; segmentIndex < chain.Points.Count - 1; segmentIndex++)
             {
+                // Each segment belongs to a single track's span, so the displacement
+                // optimization (segment length and resolution) must come from that
+                // track's settings — not the chain's (first track's) settings. This
+                // keeps each span's sidewalk brush count matching what that track
+                // produces on its own, exactly like the road body does.
+                RoadSettings segmentSettings = SettingsForSegment(chain, segmentIndex);
+                int power = Math.Clamp(segmentSettings.Power, 2, 4);
+                int resolution = 1 << power;
+                double maxSegment = Math.Max(1.0, segmentSettings.SegmentLength);
+
+                RoadSettings featureSettings = new RoadSettings
+                {
+                    Material = feature.Material,
+                    TextureScale = segmentSettings.TextureScale,
+                    LightmapScale = segmentSettings.LightmapScale,
+                    Power = power,
+                    // A left strip stores its columns outer-first, so the builder's
+                    // "left wall" (column 0) is actually the outer face and vice versa.
+                    SolidLeft = feature.LeftSide ? feature.SolidOuter : feature.SolidInner,
+                    SolidRight = feature.LeftSide ? feature.SolidInner : feature.SolidOuter,
+                    SolidBottom = feature.SolidBottom
+                };
+
                 double arcLength = RoadCurve.ArcLength(chain.Points, segmentIndex, chain.Closed);
                 int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
 
@@ -260,25 +268,46 @@ public static class RoadGenerator
             return 0;
         }
 
-        // Step a walker over the whole loop (one step per control point is enough to
-        // capture the holonomy), and measure the residual rotation at the seam.
+        // The frame walker's parallel transport depends on the chords between
+        // consecutive samples, so a coarse walker (one step per control point)
+        // measures a DIFFERENT holonomy than the fine walker the export actually
+        // uses to build geometry. Step the measure walker over the EXACT same
+        // samples the export generates (per-track resolution and subdivision), so
+        // the measured twist matches the frame the exported road really carries —
+        // otherwise the exported VMF still twists at the seam even after the
+        // preview fix.
+        IReadOnlyList<RoadPoint> points = chain.Points;
         FrameWalker measure = new FrameWalker();
         RoadFrame first = default;
         RoadFrame last = default;
-        int count = chain.Points.Count;
-        for (int i = 0; i <= count - 1; i++)
-        {
-            double t = i;
-            Vec3 pos = RoadCurve.Position(chain.Points, t, closed: true);
-            Vec3 tan = RoadCurve.Tangent(chain.Points, t, closed: true);
-            double bank = RoadCurve.Bank(chain.Points, t, closed: true) * Math.PI / 180.0;
-            RoadFrame f = measure.Step(pos, tan, bank);
-            if (i == 0)
-            {
-                first = f;
-            }
 
-            last = f;
+        for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
+        {
+            RoadSettings settings = SettingsForSegment(chain, segmentIndex);
+            int resolution = 1 << Math.Clamp(settings.Power, 2, 4);
+            double maxSegment = Math.Max(1.0, settings.SegmentLength);
+            double arcLength = RoadCurve.ArcLength(points, segmentIndex, chain.Closed);
+            int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+
+            for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
+            {
+                double startT = segmentIndex + (double)pieceIndex / subdivision;
+                double endT = segmentIndex + (double)(pieceIndex + 1) / subdivision;
+                for (int row = 0; row <= resolution; row++)
+                {
+                    double t = startT + (endT - startT) * row / resolution;
+                    Vec3 pos = RoadCurve.Position(points, t, closed: true);
+                    Vec3 tan = RoadCurve.Tangent(points, t, closed: true);
+                    double bank = RoadCurve.Bank(points, t, closed: true) * Math.PI / 180.0;
+                    RoadFrame f = measure.Step(pos, tan, bank);
+                    if (segmentIndex == 0 && pieceIndex == 0 && row == 0)
+                    {
+                        first = f;
+                    }
+
+                    last = f;
+                }
+            }
         }
 
         return RoadSurface.ClosedLoopTwist(first, last);

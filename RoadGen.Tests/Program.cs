@@ -16,6 +16,7 @@ Run("Dragging a welded point moves the point joined to it too", TestMovePointWel
 Run("Joining a third track keeps the middle track's first point rendered", TestThreeTrackJoinKeepsMiddleSpanCoverage);
 Run("A welded loop closes into one continuous circular road", TestClosedLoopFlowsContinuously);
 Run("CRITICAL: A closed loop's seam cross-section returns (no twist) for any track count", TestClosedLoopSeamReturnsForAnyTrackCount);
+Run("CRITICAL: A closed loop's VMF seam cross-section returns (no twist)", TestClosedLoopExportSeamReturns);
 Run("CRITICAL: Sidewalk stays glued to the road edge on a closed loop", TestClosedLoopSidewalkStaysOnEdge);
 Run("Sidewalk stays on its own side when two road starts are joined", TestSideAwareSplit);
 Run("Sidewalk width blends across a weld and reaches the last control point", TestWidthConcatenation);
@@ -23,6 +24,7 @@ Run("Sidewalk stops where a road has no sidewalk (doesn't run off the rails)", T
 Run("Sidewalk width/height/bank ramp smoothly between control points", TestPointAtInterpolates);
 Run("Left and right sidewalks export as valid (not inside-out) solids", TestWindingConsistent);
 Run("Optimization preview matches the exported brush count", TestSegmentCountMatchesExport);
+Run("Joined sidewalk optimization matches each track's own segment length", TestJoinedSidewalkUsesPerTrackOptimization);
 Run("Saving and reopening keeps sidewalk width/height/bank and coverage", TestTrackFileRoundTrip);
 Run("Old files with one sidewalk size upgrade to per-point values", TestTrackFileMigrationV4);
 Run("Merging two welded roads keeps the sidewalk continuous to the very end", TestMergeKeepsSidewalkContinuous);
@@ -398,6 +400,72 @@ RoadDocument BuildRollerCoasterLoop(int trackCount)
 }
 
 // ---------------------------------------------------------------------------
+// CRITICAL: a closed loop's VMF seam cross-section returns (no twist in export)
+//
+// The preview fix measured the twist with its own build walker, but the EXPORT
+// (RoadGenerator.ClosedLoopTwistOf) measured it with a SEPARATE coarse walker that
+// steps one sample per control point. Because FrameWalker parallel transport
+// depends on the chords between samples, the coarse walker measures a different
+// holonomy than the fine walker that builds the exported geometry — so the exported
+// VMF still appears twisted at the seam even after the preview is fixed. This test
+// exports the closed loop and checks that the FIRST displacement segment's
+// cross-section coincides with the LAST one's (the two sides of the seam).
+// ---------------------------------------------------------------------------
+
+void TestClosedLoopExportSeamReturns()
+{
+    RoadDocument doc = BuildRollerCoasterLoop(4);
+    string vmf = RoadGenerator.GenerateVmf(doc);
+    var planes = ExtractTopFacePlanes(vmf);
+    AssertTrue(planes.Count >= 2, "loop exports at least two road solids");
+
+    // First solid: A = grid[0,0] = the actual left-edge surface point @ t=0.
+    // Last solid:  B = grid[res,0] = the actual left-edge surface point at the seam
+    // (t = count-1). These are both REAL surface corners stored as plane anchors.
+    // The right edge can't be read this way because only the parallelogram corner
+    // A + C - B is stored for the non-anchor corner, which a curved/banked segment
+    // displaces away from — so we validate the left edge, which (because the loop
+    // closes its centerline and wraps width back to the first point) is sufficient:
+    // matching left edges implies the seam frame is un-twisted, so the right edge
+    // must match too.
+    Vec3 leftAt0 = planes[0].A;
+    Vec3 leftAtSeam = planes[planes.Count - 1].B;
+
+    double leftMismatch = (leftAtSeam - leftAt0).Length;
+    AssertTrue(leftMismatch < 0.01, $"exported road left edge returns at the seam (mismatch {leftMismatch:0.###})");
+}
+
+List<(Vec3 A, Vec3 B, Vec3 C)> ExtractTopFacePlanes(string vmf)
+{
+    List<(Vec3, Vec3, Vec3)> planes = new List<(Vec3, Vec3, Vec3)>();
+    int position = 0;
+    while ((position = vmf.IndexOf("\tsolid\r\n", position, StringComparison.Ordinal)) >= 0)
+    {
+        int sideStart = vmf.IndexOf("\t\tside\r\n", position, StringComparison.Ordinal);
+        int planeStart = vmf.IndexOf("\"plane\" \"", sideStart, StringComparison.Ordinal) + "\"plane\" \"".Length;
+        int planeEnd = vmf.IndexOf('"', planeStart);
+        string planeText = vmf.Substring(planeStart, planeEnd - planeStart).Replace("(", "").Replace(")", "");
+        string[] parts = planeText.Split(' ');
+        Vec3 a = new Vec3(
+            double.Parse(parts[0], CultureInfo.InvariantCulture),
+            double.Parse(parts[1], CultureInfo.InvariantCulture),
+            double.Parse(parts[2], CultureInfo.InvariantCulture));
+        Vec3 b = new Vec3(
+            double.Parse(parts[3], CultureInfo.InvariantCulture),
+            double.Parse(parts[4], CultureInfo.InvariantCulture),
+            double.Parse(parts[5], CultureInfo.InvariantCulture));
+        Vec3 c = new Vec3(
+            double.Parse(parts[6], CultureInfo.InvariantCulture),
+            double.Parse(parts[7], CultureInfo.InvariantCulture),
+            double.Parse(parts[8], CultureInfo.InvariantCulture));
+        planes.Add((a, b, c));
+        position += 1;
+    }
+
+    return planes;
+}
+
+// ---------------------------------------------------------------------------
 // CRITICAL: sidewalk stays glued to the road edge on a closed loop
 //
 // The road surface is twist-corrected on a closed loop, so the sidewalk frame must
@@ -583,6 +651,49 @@ void TestSegmentCountMatchesExport()
     int solids = CountOccurrences(vmf, "\tsolid\r\n");
 
     AssertEqual(expected, solids, "exported solids match SegmentLayout.CountSegments");
+}
+
+// ---------------------------------------------------------------------------
+// CRITICAL: a joined chain's sidewalk displacement count uses each track's own
+// optimization (segment length), not the chain's single (first) settings.
+//
+// The road body already subdivides per-segment via SettingsForSegment, but the
+// edge features used chain.Settings for the whole chain. So two tracks with
+// different segment lengths, welded together, would use the first track's value
+// for the second track's span — changing the sidewalk brush count. This test
+// exports the same two tracks both joined and separate and asserts they produce
+// the same number of solids (the geometry is identical, just deduplicated at the
+// weld), which only holds when each span honors its own track's segment length.
+// ---------------------------------------------------------------------------
+
+void TestJoinedSidewalkUsesPerTrackOptimization()
+{
+    int joined = ExportSolidsFor(segmentLengthA: 300, segmentLengthB: 500, join: true);
+    int separate = ExportSolidsFor(segmentLengthA: 300, segmentLengthB: 500, join: false);
+    AssertEqual(separate, joined, "joined sidewalk/road brush count matches per-track optimization");
+}
+
+int ExportSolidsFor(double segmentLengthA, double segmentLengthB, bool join)
+{
+    RoadDocument document = new RoadDocument();
+    Track a = document.Tracks[0];
+    a.Settings.Power = 2;
+    a.Settings.SegmentLength = segmentLengthA;
+    a.Points.Add(new RoadPoint(new Vec3(0, 0, 0), 256, 0));
+    a.Points.Add(new RoadPoint(new Vec3(512, 0, 0), 256, 0));
+    a.EdgeFeatures.Add(MakeSidewalk(2, leftSide: true, baseWidth: 128));
+
+    Track b = new Track("B");
+    b.Settings.Power = 2;
+    b.Settings.SegmentLength = segmentLengthB;
+    b.EnableJoining = join;
+    b.Points.Add(new RoadPoint(new Vec3(512, 0, 0), 256, 0)); // shares a's last point
+    b.Points.Add(new RoadPoint(new Vec3(1024, 0, 0), 256, 0));
+    b.EdgeFeatures.Add(MakeSidewalk(2, leftSide: true, baseWidth: 128));
+    document.Tracks.Add(b);
+
+    string vmf = RoadGenerator.GenerateVmf(document);
+    return CountOccurrences(vmf, "\tsolid\r\n");
 }
 
 List<double> ExtractTopFaceNormalZs(string vmf)

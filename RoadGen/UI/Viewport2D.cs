@@ -496,9 +496,6 @@ public sealed class Viewport2D : Control
                 continue;
             }
 
-            bool isActive = chain.ContainsTrack(activeTrack);
-            using Pen pen = new Pen(isActive ? Color.FromArgb(155, 175, 255) : Color.FromArgb(92, 98, 114), isActive ? 2.0f : 1.4f);
-
             foreach (ChainFeature chainFeature in chain.CollectFeatures())
             {
                 EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, stepsPerSegment, chainFeature, chain.Closed);
@@ -511,43 +508,76 @@ public sealed class Viewport2D : Control
                 int last = mesh.InnerTop.Count - 1;
                 bool strip = feature.Kind != EdgeFeatureKind.Guardrail;
 
-                DrawPolylineRange(g, mesh.InnerTop, pen, 0, last);
-
-                if (feature.SolidBottom || feature.SolidInner)
+                // Draw the feature piecewise by span so only the active track's own
+                // portion is highlighted; the tracks it is welded to stay muted. This
+                // mirrors DrawAllTracks, which colors each span by its own track.
+                foreach (ChainSpan span in chain.Spans)
                 {
-                    DrawPolylineRange(g, mesh.InnerBase, pen, 0, last);
-                }
-
-                if (strip)
-                {
-                    DrawPolylineRange(g, mesh.OuterTop, pen, 0, last);
-
-                    if (feature.SolidBottom || feature.SolidOuter)
+                    int lo = Math.Max(span.StartPoint, chainFeature.StartPoint);
+                    int hi = Math.Min(span.EndPoint - 1, chainFeature.EndPoint - 1);
+                    if (lo > hi)
                     {
-                        DrawPolylineRange(g, mesh.OuterBase, pen, 0, last);
+                        continue;
                     }
-                }
 
-                for (int i = 0; i < mesh.InnerTop.Count; i += 4)
-                {
+                    int startIndex = (lo - chainFeature.StartPoint) * stepsPerSegment;
+                    int endIndex = (hi - chainFeature.StartPoint) * stepsPerSegment;
+                    if (startIndex < 0)
+                    {
+                        startIndex = 0;
+                    }
+
+                    if (endIndex > last)
+                    {
+                        endIndex = last;
+                    }
+
+                    if (startIndex > endIndex)
+                    {
+                        continue;
+                    }
+
+                    bool isActive = ReferenceEquals(span.Track, activeTrack);
+                    using Pen pen = new Pen(isActive ? Color.FromArgb(155, 175, 255) : Color.FromArgb(92, 98, 114), isActive ? 2.0f : 1.4f);
+
+                    DrawPolylineRange(g, mesh.InnerTop, pen, startIndex, endIndex);
+
+                    if (feature.SolidBottom || feature.SolidInner)
+                    {
+                        DrawPolylineRange(g, mesh.InnerBase, pen, startIndex, endIndex);
+                    }
+
                     if (strip)
                     {
-                        g.DrawLine(pen, WorldToScreenF(mesh.InnerTop[i]), WorldToScreenF(mesh.OuterTop[i]));
+                        DrawPolylineRange(g, mesh.OuterTop, pen, startIndex, endIndex);
+
+                        if (feature.SolidBottom || feature.SolidOuter)
+                        {
+                            DrawPolylineRange(g, mesh.OuterBase, pen, startIndex, endIndex);
+                        }
                     }
 
-                    if (feature.SolidBottom && strip)
+                    for (int i = startIndex; i <= endIndex; i += 4)
                     {
-                        g.DrawLine(pen, WorldToScreenF(mesh.InnerBase[i]), WorldToScreenF(mesh.OuterBase[i]));
-                    }
+                        if (strip)
+                        {
+                            g.DrawLine(pen, WorldToScreenF(mesh.InnerTop[i]), WorldToScreenF(mesh.OuterTop[i]));
+                        }
 
-                    if (feature.SolidInner)
-                    {
-                        g.DrawLine(pen, WorldToScreenF(mesh.InnerTop[i]), WorldToScreenF(mesh.InnerBase[i]));
-                    }
+                        if (feature.SolidBottom && strip)
+                        {
+                            g.DrawLine(pen, WorldToScreenF(mesh.InnerBase[i]), WorldToScreenF(mesh.OuterBase[i]));
+                        }
 
-                    if (feature.SolidOuter && strip)
-                    {
-                        g.DrawLine(pen, WorldToScreenF(mesh.OuterTop[i]), WorldToScreenF(mesh.OuterBase[i]));
+                        if (feature.SolidInner)
+                        {
+                            g.DrawLine(pen, WorldToScreenF(mesh.InnerTop[i]), WorldToScreenF(mesh.InnerBase[i]));
+                        }
+
+                        if (feature.SolidOuter && strip)
+                        {
+                            g.DrawLine(pen, WorldToScreenF(mesh.OuterTop[i]), WorldToScreenF(mesh.OuterBase[i]));
+                        }
                     }
                 }
             }
@@ -632,7 +662,7 @@ public sealed class Viewport2D : Control
 
             foreach (ChainFeature chainFeature in chain.CollectFeatures())
             {
-                List<SegmentLayout.Segment> segments = SegmentLayout.ComputeFeatureSegments(chain.Points, chain.Settings, chainFeature, chain.Closed);
+                List<SegmentLayout.Segment> segments = SegmentLayout.ComputeFeatureSegments(chain, chainFeature);
                 foreach (SegmentLayout.Segment seg in segments)
                 {
                     Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;

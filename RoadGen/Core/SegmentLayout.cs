@@ -221,16 +221,18 @@ public static class SegmentLayout
 
     /// <summary>Subdivide one edge feature exactly like the exporter and return one
     /// entry per displacement segment (the strip's top-face base parallelogram).
-    /// Uses the road's segment length, so the optimization follows the main road.</summary>
-    public static List<Segment> ComputeFeatureSegments(IReadOnlyList<RoadPoint> pts, RoadSettings s, ChainFeature chainFeature, bool closed = false)
+    /// Each segment uses its own track's segment length, so a joined chain's sidewalk
+    /// optimization per span matches what that track produces on its own.</summary>
+    public static List<Segment> ComputeFeatureSegments(RoadChain chain, ChainFeature chainFeature)
     {
+        IReadOnlyList<RoadPoint> pts = chain.Points;
+        bool closed = chain.Closed;
         var result = new List<Segment>();
         if (pts.Count < 2 || chainFeature == null || chainFeature.Points.Count == 0)
         {
             return result;
         }
 
-        double maxSegment = Math.Max(1.0, s.SegmentLength);
         var walker = new FrameWalker();
         EdgeFeature feature = chainFeature.Feature;
         double sign = feature.LeftSide ? -1.0 : 1.0;
@@ -240,26 +242,35 @@ public static class SegmentLayout
         int endPoint = Math.Clamp(chainFeature.EndPoint, startPoint + 1, pts.Count);
 
         // Same twist correction as the road/sidewalk preview so the segments stay
-        // glued to the edge on a closed loop.
+        // glued to the edge on a closed loop. Measure over the same samples the
+        // build walker steps (per-segment piece boundaries) so the measured twist
+        // matches the frames the segments actually carry, rather than a coarse
+        // control-point walker.
         double twist = 0;
         if (closed && pts.Count >= 3)
         {
             FrameWalker measure = new FrameWalker();
             RoadFrame first = default;
             RoadFrame last = default;
-            for (int j = 0; j <= pts.Count - 1; j++)
+            for (int seg = 0; seg < pts.Count - 1; seg++)
             {
-                double tj = j;
-                Vec3 pos = RoadCurve.Position(pts, tj, true);
-                Vec3 tan = RoadCurve.Tangent(pts, tj, true);
-                double bank = RoadCurve.Bank(pts, tj, true) * Math.PI / 180.0;
-                RoadFrame f = measure.Step(pos, tan, bank);
-                if (j == 0)
+                double maxSegment = Math.Max(1.0, SettingsForSegment(chain, seg).SegmentLength);
+                double arcLength = RoadCurve.ArcLength(pts, seg, true);
+                int subdiv = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+                for (int k = 0; k <= subdiv; k++)
                 {
-                    first = f;
-                }
+                    double tj = seg + (double)k / subdiv;
+                    Vec3 pos = RoadCurve.Position(pts, tj, true);
+                    Vec3 tan = RoadCurve.Tangent(pts, tj, true);
+                    double bank = RoadCurve.Bank(pts, tj, true) * Math.PI / 180.0;
+                    RoadFrame f = measure.Step(pos, tan, bank);
+                    if (seg == 0 && k == 0)
+                    {
+                        first = f;
+                    }
 
-                last = f;
+                    last = f;
+                }
             }
 
             twist = RoadSurface.ClosedLoopTwist(first, last);
@@ -267,6 +278,7 @@ public static class SegmentLayout
 
         for (int seg = 0; seg < pts.Count - 1; seg++)
         {
+            double maxSegment = Math.Max(1.0, SettingsForSegment(chain, seg).SegmentLength);
             double arcLength = RoadCurve.ArcLength(pts, seg, closed);
             int subdiv = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
 
@@ -303,6 +315,22 @@ public static class SegmentLayout
         }
 
         return result;
+    }
+
+    /// <summary>The settings of the track that owns a chain segment, so a joined
+    /// chain's edge features use each track's own optimization (segment length,
+    /// resolution) rather than the chain's single (first) settings.</summary>
+    private static RoadSettings SettingsForSegment(RoadChain chain, int segmentIndex)
+    {
+        foreach (ChainSpan span in chain.Spans)
+        {
+            if (segmentIndex >= span.StartPoint && segmentIndex < span.EndPoint - 1)
+            {
+                return span.Track.Settings;
+            }
+        }
+
+        return chain.Settings;
     }
 
     private static RoadFrame StepFrame(FrameWalker walker, IReadOnlyList<RoadPoint> pts, double t, bool closed = false, double twist = 0)
