@@ -13,6 +13,7 @@ Run("Welding two road starts keeps both halves attached (no dropped shared point
 Run("Welding two road ends keeps both halves attached", TestEndToEndReverses);
 Run("A road with joining disabled stays a separate road", TestEnableJoiningSeparates);
 Run("Dragging a welded point moves the point joined to it too", TestMovePointWelded);
+Run("Joining a third track keeps the middle track's first point rendered", TestThreeTrackJoinKeepsMiddleSpanCoverage);
 Run("Sidewalk stays on its own side when two road starts are joined", TestSideAwareSplit);
 Run("Sidewalk width blends across a weld and reaches the last control point", TestWidthConcatenation);
 Run("Sidewalk stops where a road has no sidewalk (doesn't run off the rails)", TestStopsAtFeaturelessTrack);
@@ -185,6 +186,55 @@ void TestMovePointWelded()
     document.MovePointWelded(first, 1, new Vec3(600, 0, 0), new Vec3(512, 0, 0));
 
     AssertEqual(600.0, second.Points[0].Position.X, "welded point moved with the delta");
+}
+
+void TestThreeTrackJoinKeepsMiddleSpanCoverage()
+{
+    // Two tracks join (A end -> B start), then a third (C) joins B's end.
+    // Re-merging the A+B chain into A+B+C used to drop the B span's colouring
+    // extension, so the segment right after the A/B junction (the middle track's
+    // first point) was not drawn.
+    RoadDocument document = new RoadDocument();
+    Track first = document.Tracks[0];
+    first.Points.Add(new RoadPoint(new Vec3(0, 0, 0), 256, 0));
+    first.Points.Add(new RoadPoint(new Vec3(512, 0, 0), 256, 0));
+    first.Points.Add(new RoadPoint(new Vec3(1024, 0, 0), 256, 0));
+
+    Track middle = new Track("Middle");
+    middle.Points.Add(new RoadPoint(new Vec3(1024, 0, 0), 256, 0));   // joins A end
+    middle.Points.Add(new RoadPoint(new Vec3(1536, 256, 0), 256, 0));
+    middle.Points.Add(new RoadPoint(new Vec3(2048, 0, 0), 256, 0));
+    middle.Points.Add(new RoadPoint(new Vec3(2560, -256, 0), 256, 0));
+    middle.Points.Add(new RoadPoint(new Vec3(3072, 0, 0), 256, 0));
+    middle.Points.Add(new RoadPoint(new Vec3(3584, 256, 0), 256, 0)); // joins C start
+    document.Tracks.Add(middle);
+
+    Track third = new Track("Third");
+    third.Points.Add(new RoadPoint(new Vec3(3584, 256, 0), 256, 0));  // joins middle end
+    third.Points.Add(new RoadPoint(new Vec3(4096, 256, 0), 256, 0));
+    third.Points.Add(new RoadPoint(new Vec3(4608, 256, 0), 256, 0));
+    document.Tracks.Add(third);
+
+    List<RoadChain> chains = document.BuildChains();
+    AssertEqual(1, chains.Count, "all three tracks join into one chain");
+
+    RoadChain chain = chains[0];
+    ChainSpan middleSpan = chain.Spans.First(span => ReferenceEquals(span.Track, middle));
+
+    // The middle span must colour the shared junction segment leading out of its
+    // own first point. When the colouring extension survives the re-merge,
+    // StartPoint is one behind TrueStart; when it is dropped they are equal and
+    // the segment between the A/B junction and the middle's second point is left
+    // undrawn (so the middle track's first point appears unrendered).
+    AssertEqual(middleSpan.TrueStart - 1, middleSpan.StartPoint,
+        "middle track's span colours the junction segment out of its first point");
+
+    // Every span after the first should carry the extension, so the whole road is
+    // drawn continuously across each junction.
+    foreach (ChainSpan span in chain.Spans.Skip(1))
+    {
+        AssertEqual(span.TrueStart - 1, span.StartPoint, "every span colours the junction leading into it");
+    }
 }
 
 // ---------------------------------------------------------------------------

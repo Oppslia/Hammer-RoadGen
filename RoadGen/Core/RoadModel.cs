@@ -414,6 +414,26 @@ public sealed class RoadDocument
             }
         }
 
+        // A chain can be built by merging an already-merged chain into a longer one
+        // (e.g. when a third track joins an A+B pair). Re-appending a chain computes
+        // each span's range from TrueStart and drops the per-span colouring extension
+        // (StartPoint = TrueStart - 1) that makes a span draw the shared junction
+        // segment leading into it. Re-derive it for every span after the first; a
+        // two-track join already extends StartPoint once, but a subsequent re-merge
+        // would otherwise leave the segment right after a junction undrawn, so the
+        // track's first point appears unrendered.
+        foreach (RoadChain chain in chains)
+        {
+            for (int spanIndex = 1; spanIndex < chain.Spans.Count; spanIndex++)
+            {
+                ChainSpan span = chain.Spans[spanIndex];
+                if (span.TrueStart > 0)
+                {
+                    span.StartPoint = span.TrueStart - 1;
+                }
+            }
+        }
+
         return chains;
     }
 
