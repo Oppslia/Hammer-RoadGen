@@ -54,6 +54,16 @@ public sealed class Viewport2D : Control
     private Point _boxStart;
     private Point _boxCurrent;
 
+    // Tooltip shown when hovering a welded (joined) node, hinting how to break the
+    // weld. _hoverWeldIndex tracks the point currently showing the tooltip so it
+    // stays put while hovering and only hides when the target changes. The tooltip
+    // is debounced: the pointer must hold on the node for _hoverDelay before it
+    // appears.
+    private readonly ToolTip _hoverToolTip = new ToolTip();
+    private readonly System.Windows.Forms.Timer _hoverTimer = new System.Windows.Forms.Timer { Interval = 500 };
+    private Point _hoverLocation;
+    private int _hoverWeldIndex = -2;
+
     public Action<int, bool> PointSelected;
     public Action<IReadOnlyList<int>, bool> BoxSelected;
     public Action<IReadOnlyList<int>> PointsEdited;
@@ -74,6 +84,11 @@ public sealed class Viewport2D : Control
             true);
         BackColor = Color.FromArgb(42, 42, 46);
         TabStop = false;
+        _hoverToolTip.AutoPopDelay = 6000;
+        _hoverToolTip.InitialDelay = 250;
+        _hoverToolTip.ReshowDelay = 100;
+        _hoverToolTip.ShowAlways = true;
+        _hoverTimer.Tick += OnHoverTimerTick;
     }
 
     public void SetDocument(RoadDocument doc) => _doc = doc;
@@ -905,6 +920,9 @@ public sealed class Viewport2D : Control
     {
         base.OnMouseDown(e);
         Focus();
+        _hoverToolTip.Hide(this);
+        _hoverTimer.Stop();
+        _hoverWeldIndex = -2;
 
         if (e.Button == MouseButtons.Middle || e.Button == MouseButtons.Right)
         {
@@ -955,6 +973,7 @@ public sealed class Viewport2D : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        UpdateHoverTooltip(e.Location);
 
         if (_panning)
         {
@@ -1106,6 +1125,14 @@ public sealed class Viewport2D : Control
         Invalidate();
     }
 
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        _hoverToolTip.Hide(this);
+        _hoverTimer.Stop();
+        _hoverWeldIndex = -2;
+    }
+
     private bool TryHitPoint(Point s, out int index)
     {
         index = -1;
@@ -1127,6 +1154,78 @@ public sealed class Viewport2D : Control
         }
 
         return index >= 0;
+    }
+
+    /// <summary>Debounced hint when hovering a welded (joined) track node, i.e. a
+    /// point whose position is shared with another track. The pointer must hold on
+    /// the node for the timer interval before the tooltip appears; it hides when the
+    /// pointer leaves the node, starts dragging/panning/box-selecting, or leaves the
+    /// control.</summary>
+    private void UpdateHoverTooltip(Point location)
+    {
+        _hoverLocation = location;
+
+        int target = -1;
+        if (!_panning && _dragIndex < 0 && !_dragging && !_boxSelecting && _doc != null
+            && _doc.Points != null && TryHitPoint(location, out int idx)
+            && idx >= 0 && idx < _doc.Points.Count
+            && IsWeldPoint(_doc.Points[idx].Position))
+        {
+            target = idx;
+        }
+
+        if (target == _hoverWeldIndex)
+        {
+            return;
+        }
+
+        _hoverWeldIndex = target;
+        _hoverTimer.Stop();
+        _hoverToolTip.Hide(this);
+
+        if (target >= 0)
+        {
+            _hoverTimer.Start();
+        }
+    }
+
+    private void OnHoverTimerTick(object sender, EventArgs e)
+    {
+        _hoverTimer.Stop();
+        if (_hoverWeldIndex < 0)
+        {
+            return;
+        }
+
+        _hoverToolTip.Show("Hold Shift + M1 and drag to disconnect", this, _hoverLocation.X + 14, _hoverLocation.Y + 14, 6000);
+    }
+
+    /// <summary>True when a position is shared by more than one track, i.e. it is a
+    /// welded/joined junction node.</summary>
+    private bool IsWeldPoint(Vec3 position)
+    {
+        if (_doc == null)
+        {
+            return false;
+        }
+
+        int matches = 0;
+        foreach (Track track in _doc.Tracks)
+        {
+            foreach (RoadPoint point in track.Points)
+            {
+                if (RoadDocument.PositionsMatch(point.Position, position))
+                {
+                    matches++;
+                    if (matches >= 2)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private List<int> PointsInBox()
