@@ -19,6 +19,7 @@ public sealed class Viewport2D : Control
     }
 
     private RoadDocument _doc;
+    private VmfWorld _referenceWorld;
     private PlaneKind _plane = PlaneKind.Top;
     private Vec3 _center = new Vec3(512, 512, 0);
     private double _zoom = 0.45;
@@ -95,6 +96,14 @@ public sealed class Viewport2D : Control
 
     public bool ShowSegments;
     public bool ShowFeatureSegments;
+    public bool ShowReferenceWorld = true;
+
+    /// <summary>Sets the imported VMF layout to render as a reference behind the road.</summary>
+    public void SetReferenceWorld(VmfWorld world)
+    {
+        _referenceWorld = world;
+        Invalidate();
+    }
 
     public void SetPlane(PlaneKind plane)
     {
@@ -195,6 +204,7 @@ public sealed class Viewport2D : Control
         }
 
         DrawGridAndAxes(g);
+        DrawReferenceWorld(g);
 
         if (_doc == null)
         {
@@ -814,6 +824,70 @@ public sealed class Viewport2D : Control
         PlaneKind.Front => ("X", "Z"),
         _ => ("Y", "Z")
     };
+
+    private void DrawReferenceWorld(Graphics g)
+    {
+        if (!ShowReferenceWorld || _referenceWorld == null)
+        {
+            return;
+        }
+
+        using Pen brushPen = new Pen(Color.FromArgb(150, 162, 182), 1f);
+        foreach (VmfBrush brush in _referenceWorld.Brushes)
+        {
+            foreach (VmfFace face in brush.Faces)
+            {
+                if (IsNoDraw(face.Material))
+                {
+                    continue;
+                }
+
+                DrawClosedLoop(g, face.Vertices, brushPen);
+            }
+        }
+
+        using Pen displacementPen = new Pen(Color.FromArgb(120, 220, 150), 1f);
+        foreach (VmfDisplacement displacement in _referenceWorld.Displacements)
+        {
+            DrawDisplacementWire(g, displacement, displacementPen);
+        }
+    }
+
+    private void DrawClosedLoop(Graphics g, IReadOnlyList<Vec3> pts, Pen pen)
+    {
+        if (pts.Count < 3)
+        {
+            return;
+        }
+
+        for (int i = 0; i < pts.Count; i++)
+        {
+            g.DrawLine(pen, WorldToScreenF(pts[i]), WorldToScreenF(pts[(i + 1) % pts.Count]));
+        }
+    }
+
+    private void DrawDisplacementWire(Graphics g, VmfDisplacement displacement, Pen pen)
+    {
+        int n = displacement.Grid.GetLength(0);
+        for (int r = 0; r < n; r++)
+        {
+            for (int c = 0; c < n; c++)
+            {
+                if (c + 1 < n)
+                {
+                    g.DrawLine(pen, WorldToScreenF(displacement.Grid[r, c]), WorldToScreenF(displacement.Grid[r, c + 1]));
+                }
+
+                if (r + 1 < n)
+                {
+                    g.DrawLine(pen, WorldToScreenF(displacement.Grid[r, c]), WorldToScreenF(displacement.Grid[r + 1, c]));
+                }
+            }
+        }
+    }
+
+    private static bool IsNoDraw(string material) =>
+        material != null && material.IndexOf("NODRAW", StringComparison.OrdinalIgnoreCase) >= 0;
 
     // ----- world/screen mapping -----
 

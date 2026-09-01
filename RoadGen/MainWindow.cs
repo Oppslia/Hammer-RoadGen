@@ -17,6 +17,7 @@ public sealed partial class MainWindow : Form
     private ToolStripButton _btnSave;
     private ToolStripButton _btnSaveAs;
     private ToolStripButton _btnImport;
+    private ToolStripButton _btnImportLayout;
     private ToolStripButton _btnNew;
     private ToolStripButton _btnAddPoint;
     private ToolStripButton _btnRemovePoint;
@@ -126,6 +127,9 @@ public sealed partial class MainWindow : Form
     private int _selectedIndex = -1;
     private bool _loading;
     private string _currentTrackPath;
+    private string _layoutVmfPath;
+    private System.IO.FileSystemWatcher _layoutWatcher;
+    private System.Windows.Forms.Timer _layoutReloadTimer;
     private bool _dirty;
     private bool _suppressDirty;
 
@@ -152,6 +156,15 @@ public sealed partial class MainWindow : Form
         ApplyAllToolTips();
         _repeatTimer.Tick += OnOptRepeatTick;
 
+        // Stop watching the layout VMF when the window closes.
+        FormClosed += (s, e) =>
+        {
+            _layoutWatcher?.Dispose();
+            _layoutWatcher = null;
+            _layoutReloadTimer?.Dispose();
+            _layoutReloadTimer = null;
+        };
+
         SeedDefaultRoad();
         _suppressDirty = true;
         _doc.NotifyChanged();
@@ -177,10 +190,12 @@ public sealed partial class MainWindow : Form
         _btnSave = ToolButton("Save Track", (s, e) => SaveTrack());
         _btnSaveAs = ToolButton("Save Track As...", (s, e) => SaveTrackAs());
         _btnImport = ToolButton("Import VMF...", (s, e) => ImportVmf());
+        _btnImportLayout = ToolButton("Import Layout VMF...", (s, e) => ImportLayoutVmf());
         topActionBar.Items.Add(_btnOpen);
         topActionBar.Items.Add(_btnSave);
         topActionBar.Items.Add(_btnSaveAs);
         topActionBar.Items.Add(_btnImport);
+        topActionBar.Items.Add(_btnImportLayout);
         topActionBar.Items.Add(new ToolStripSeparator());
         _btnNew = ToolButton("New", (s, e) => NewRoad());
         topActionBar.Items.Add(_btnNew);
@@ -633,7 +648,7 @@ public sealed partial class MainWindow : Form
         featureFaceToggleRow.Controls.Add(_chkFeatureInner);
         featureFaceToggleRow.Controls.Add(_chkFeatureOuter);
         featureFaceToggleRow.Controls.Add(_chkFeatureBottom);
-        
+
         TableLayoutPanel featureInputs = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -1304,6 +1319,126 @@ public sealed partial class MainWindow : Form
         catch (Exception ex)
         {
             MessageBox.Show(this, "Import failed:\n" + ex.Message, "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>Imports an entire VMF's brushes and displacements as a reference
+    /// layout (drawn behind the road in every viewport). It doesn't touch the
+    /// document — it's a visual guide for building a road around a level.</summary>
+    private void ImportLayoutVmf()
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Filter = "Hammer Files (*.vmf)|*.vmf",
+            Title = "Import layout VMF (brushes + displacements)"
+        };
+
+        if (dlg.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            string text = System.IO.File.ReadAllText(dlg.FileName);
+            VmfWorld world = VmfWorldImporter.ImportWorld(text);
+
+            _v3d.SetReferenceWorld(world);
+            _top.SetReferenceWorld(world);
+            _front.SetReferenceWorld(world);
+            _side.SetReferenceWorld(world);
+            InvalidateAll();
+
+            StartLayoutWatch(dlg.FileName);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Import failed:\n" + ex.Message, "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>Watches the imported layout VMF so every save to the file refreshes
+    /// the reference world automatically — no manual re-import or restart needed.</summary>
+    private void StartLayoutWatch(string path)
+    {
+        _layoutVmfPath = path;
+
+        if (_layoutReloadTimer == null)
+        {
+            _layoutReloadTimer = new System.Windows.Forms.Timer { Interval = 400 };
+            _layoutReloadTimer.Tick += (s, e) => ReloadLayoutVmf();
+        }
+
+        _layoutWatcher?.Dispose();
+        _layoutWatcher = new System.IO.FileSystemWatcher
+        {
+            Path = System.IO.Path.GetDirectoryName(path) ?? "",
+            Filter = System.IO.Path.GetFileName(path),
+            NotifyFilter = System.IO.NotifyFilters.LastWrite
+                | System.IO.NotifyFilters.FileName
+                | System.IO.NotifyFilters.Size
+                | System.IO.NotifyFilters.CreationTime,
+            EnableRaisingEvents = true
+        };
+        _layoutWatcher.Changed += OnLayoutFileChanged;
+        _layoutWatcher.Created += OnLayoutFileChanged;
+        _layoutWatcher.Renamed += OnLayoutFileChanged;
+        _layoutWatcher.Deleted += OnLayoutFileChanged;
+    }
+
+    private void OnLayoutFileChanged(object sender, System.IO.FileSystemEventArgs e)
+    {
+        // Fires on a background thread; marshal to the UI thread and debounce so a
+        // burst of save events (editors write in chunks / rename temp files) becomes
+        // one reload shortly after the file settles.
+        System.Windows.Forms.Timer timer = _layoutReloadTimer;
+        if (timer == null || !IsHandleCreated)
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                timer.Stop();
+                timer.Start();
+            }));
+        }
+        catch
+        {
+            // Window is closing / timer disposed — nothing to reload.
+        }
+    }
+
+    private void ReloadLayoutVmf()
+    {
+        _layoutReloadTimer?.Stop();
+
+        if (string.IsNullOrEmpty(_layoutVmfPath) || !System.IO.File.Exists(_layoutVmfPath))
+        {
+            return; // file deleted; keep the last good layout
+        }
+
+        // Retry a couple of times in case the read catches the write mid-flight.
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                string text = System.IO.File.ReadAllText(_layoutVmfPath);
+                VmfWorld world = VmfWorldImporter.ImportWorld(text);
+
+                _v3d.SetReferenceWorld(world);
+                _top.SetReferenceWorld(world);
+                _front.SetReferenceWorld(world);
+                _side.SetReferenceWorld(world);
+                InvalidateAll();
+                return;
+            }
+            catch (Exception)
+            {
+                System.Threading.Thread.Sleep(150);
+            }
         }
     }
 

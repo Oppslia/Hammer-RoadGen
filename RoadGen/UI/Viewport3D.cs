@@ -11,6 +11,7 @@ namespace RoadGen.UI;
 public sealed class Viewport3D : Control
 {
     private RoadDocument _doc;
+    private VmfWorld _referenceWorld;
     private double _yaw = -0.85;
     private double _pitch = 0.55;
     private double _dist = 2800;
@@ -49,6 +50,14 @@ public sealed class Viewport3D : Control
 
     public bool ShowSegments;
     public bool ShowFeatureSegments;
+    public bool ShowReferenceWorld = true;
+
+    /// <summary>Sets the imported VMF layout to render as a reference behind the road.</summary>
+    public void SetReferenceWorld(VmfWorld world)
+    {
+        _referenceWorld = world;
+        Invalidate();
+    }
 
     /// <summary>Cancel any in-progress orbit/pan/click. The 3D view has no point
     /// drag, but this keeps the API consistent when points are deleted.</summary>
@@ -107,6 +116,7 @@ public sealed class Viewport3D : Control
         SetupCamera();
         DrawGroundGrid(g);
         DrawAxes(g);
+        DrawReferenceWorld(g);
 
         if (_doc != null)
         {
@@ -554,6 +564,70 @@ public sealed class Viewport3D : Control
 
         g.DrawLine(pen, pa.Value, pb.Value);
     }
+
+    private void DrawReferenceWorld(Graphics g)
+    {
+        if (!ShowReferenceWorld || _referenceWorld == null)
+        {
+            return;
+        }
+
+        using Pen brushPen = new Pen(Color.FromArgb(150, 162, 182), 1f);
+        foreach (VmfBrush brush in _referenceWorld.Brushes)
+        {
+            foreach (VmfFace face in brush.Faces)
+            {
+                if (IsNoDraw(face.Material))
+                {
+                    continue;
+                }
+
+                DrawClosedLoop3D(g, face.Vertices, brushPen);
+            }
+        }
+
+        using Pen displacementPen = new Pen(Color.FromArgb(120, 220, 150), 1f);
+        foreach (VmfDisplacement displacement in _referenceWorld.Displacements)
+        {
+            DrawDisplacementWire3D(g, displacement, displacementPen);
+        }
+    }
+
+    private void DrawClosedLoop3D(Graphics g, IReadOnlyList<Vec3> pts, Pen pen)
+    {
+        if (pts.Count < 3)
+        {
+            return;
+        }
+
+        for (int i = 0; i < pts.Count; i++)
+        {
+            Draw3DLine(g, pts[i], pts[(i + 1) % pts.Count], pen);
+        }
+    }
+
+    private void DrawDisplacementWire3D(Graphics g, VmfDisplacement displacement, Pen pen)
+    {
+        int n = displacement.Grid.GetLength(0);
+        for (int r = 0; r < n; r++)
+        {
+            for (int c = 0; c < n; c++)
+            {
+                if (c + 1 < n)
+                {
+                    Draw3DLine(g, displacement.Grid[r, c], displacement.Grid[r, c + 1], pen);
+                }
+
+                if (r + 1 < n)
+                {
+                    Draw3DLine(g, displacement.Grid[r, c], displacement.Grid[r + 1, c], pen);
+                }
+            }
+        }
+    }
+
+    private static bool IsNoDraw(string material) =>
+        material != null && material.IndexOf("NODRAW", StringComparison.OrdinalIgnoreCase) >= 0;
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
