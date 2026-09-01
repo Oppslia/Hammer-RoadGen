@@ -54,6 +54,16 @@ public sealed class Viewport2D : Control
     private Point _boxStart;
     private Point _boxCurrent;
 
+    // Tooltip shown when hovering a welded (joined) node, hinting how to break the
+    // weld. _hoverWeldIndex tracks the point currently showing the tooltip so it
+    // stays put while hovering and only hides when the target changes. The tooltip
+    // is debounced: the pointer must hold on the node for _hoverDelay before it
+    // appears.
+    private readonly ToolTip _hoverToolTip = new ToolTip();
+    private readonly System.Windows.Forms.Timer _hoverTimer = new System.Windows.Forms.Timer { Interval = 500 };
+    private Point _hoverLocation;
+    private int _hoverWeldIndex = -2;
+
     public Action<int, bool> PointSelected;
     public Action<IReadOnlyList<int>, bool> BoxSelected;
     public Action<IReadOnlyList<int>> PointsEdited;
@@ -74,11 +84,17 @@ public sealed class Viewport2D : Control
             true);
         BackColor = Color.FromArgb(42, 42, 46);
         TabStop = false;
+        _hoverToolTip.AutoPopDelay = 6000;
+        _hoverToolTip.InitialDelay = 250;
+        _hoverToolTip.ReshowDelay = 100;
+        _hoverToolTip.ShowAlways = true;
+        _hoverTimer.Tick += OnHoverTimerTick;
     }
 
     public void SetDocument(RoadDocument doc) => _doc = doc;
 
     public bool ShowSegments;
+    public bool ShowFeatureSegments;
 
     public void SetPlane(PlaneKind plane)
     {
@@ -113,17 +129,35 @@ public sealed class Viewport2D : Control
 
     private void ApplyFrame()
     {
-        if (_doc == null || _doc.Points.Count == 0)
+        if (_doc == null)
         {
             return;
         }
 
-        Vec3 min = _doc.Points[0].Position;
-        Vec3 max = _doc.Points[0].Position;
-        foreach (RoadPoint p in _doc.Points)
+        bool foundAny = false;
+        Vec3 min = Vec3.Zero;
+        Vec3 max = Vec3.Zero;
+        foreach (Track track in _doc.Tracks)
         {
-            min = Vec3.Min(min, p.Position);
-            max = Vec3.Max(max, p.Position);
+            foreach (RoadPoint p in track.Points)
+            {
+                if (!foundAny)
+                {
+                    min = p.Position;
+                    max = p.Position;
+                    foundAny = true;
+                }
+                else
+                {
+                    min = Vec3.Min(min, p.Position);
+                    max = Vec3.Max(max, p.Position);
+                }
+            }
+        }
+
+        if (!foundAny)
+        {
+            return;
         }
 
         Vec3 mid = (min + max) / 2.0;
@@ -169,9 +203,11 @@ public sealed class Viewport2D : Control
             return;
         }
 
-        RoadPreviewMesh mesh = RoadPreviewMesh.Build(_doc.Points, 24, _doc.Settings.Thickness);
-        DrawRoad(g, mesh);
+        DrawAllTracks(g);
+        DrawEdgeFeatures(g);
         DrawSegments(g);
+        DrawFeatureSegments(g);
+        DrawInactivePoints(g);
         DrawPoints(g);
         DrawHint(g);
         DrawBox(g);
@@ -235,8 +271,14 @@ public sealed class Viewport2D : Control
         double minY = Math.Min(top, bottom);
         double maxY = Math.Max(top, bottom);
 
-        // Avoid drawing absurd numbers of lines when zoomed way out.
-        while ((maxX - minX) / snap > 250)
+        // Keep the grid glued to the configured size (snap) so it behaves like a
+        // stable world-space lattice (Hammer-style) instead of re-scaling to the
+        // current perspective as you zoom. Only coarsen the spacing when the line
+        // count would be absurd (very far zoom-out, where the lines are sub-pixel
+        // anyway), rather than doubling at a modest cell count.
+        double span = Math.Max(maxX - minX, maxY - minY);
+        const int maxLines = 2000;
+        while (span / snap > maxLines)
         {
             snap *= 2;
         }
@@ -327,70 +369,263 @@ public sealed class Viewport2D : Control
         _ => new Vec3(o, h, v)
     };
 
-    private void DrawRoad(Graphics g, RoadPreviewMesh mesh)
+    private void DrawAllTracks(Graphics g)
     {
-        using Pen edge = new Pen(Color.FromArgb(80, 190, 255), 2.6f);   // cyan: road edges
-        using Pen center = new Pen(Color.FromArgb(120, 235, 120), 2.4f); // green: centerline
-        using Pen rib = new Pen(Color.FromArgb(85, 85, 95), 2f);
-        using Pen wall = new Pen(Color.FromArgb(255, 160, 70), 2.2f);    // orange: walls/bottom
+        Track activeTrack = _doc.ActiveTrack;
+        const int stepsPerSegment = 24;
 
-        bool hasThickness = _doc.Settings.Thickness > 0;
-
-        DrawPolyline(g, mesh.Left, edge);
-        DrawPolyline(g, mesh.Right, edge);
-        DrawPolyline(g, mesh.Center, center);
-
-        // Ribs across the road every 4 preview samples. Hidden in "See disps"
-        // mode, where the displacement brush outlines replace them as the bands.
-        if (!ShowSegments)
+        foreach (RoadChain chain in _doc.BuildChains())
         {
-            for (int i = 0; i < mesh.Center.Count; i += 4)
+            if (chain.Points.Count < 2)
             {
-                g.DrawLine(rib, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.Right[i]));
+                continue;
+            }
+
+            RoadPreviewMesh mesh = RoadPreviewMesh.Build(chain.Points, stepsPerSegment, chain.Closed);
+
+            // Draw each track's own portion with that track's settings (solid
+            // sides, thickness) and active/muted color. The chain shares one
+            // spline so the road still flows smoothly through the junction.
+            foreach (ChainSpan span in chain.Spans)
+            {
+                if (span.EndPoint - span.StartPoint < 2)
+                {
+                    continue;
+                }
+
+                bool isActive = ReferenceEquals(span.Track, activeTrack);
+                int startIndex = span.StartPoint * stepsPerSegment;
+                int endIndex = (span.EndPoint - 1) * stepsPerSegment;
+                DrawMeshRange(g, mesh, span.Track.Settings, isActive, startIndex, endIndex);
             }
         }
+    }
 
-        // In the Top view the road is seen from above, so the thickness (walls and
-        // bottom edges) is hidden directly beneath the surface. Drawing them there
-        // would overdraw the cyan edge lines and muddy the colors together.
+    private void DrawMeshRange(Graphics g, RoadPreviewMesh mesh, RoadSettings settings, bool isActive, int startIndex, int endIndex)
+    {
+        if (startIndex < 0)
+        {
+            startIndex = 0;
+        }
+
+        if (endIndex > mesh.Center.Count - 1)
+        {
+            endIndex = mesh.Center.Count - 1;
+        }
+
+        if (startIndex > endIndex)
+        {
+            return;
+        }
+
+        using Pen edge = new Pen(isActive ? Color.FromArgb(80, 190, 255) : Color.FromArgb(105, 115, 130), isActive ? 2.6f : 1.6f);
+        using Pen center = new Pen(isActive ? Color.FromArgb(120, 235, 120) : Color.FromArgb(95, 105, 120), isActive ? 2.4f : 1.4f);
+        using Pen rib = new Pen(isActive ? Color.FromArgb(85, 85, 95) : Color.FromArgb(58, 60, 68), 2f);
+        using Pen wall = new Pen(isActive ? Color.FromArgb(255, 160, 70) : Color.FromArgb(80, 85, 98), 2.2f);
+
         bool showThickness = _plane != PlaneKind.Top;
 
-        // Each side's bottom edge is drawn independently so the walls terminate on a
-        // visible line without connecting underneath (no fake bottom) unless the bottom
-        // face is enabled.
-        if (showThickness && hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidLeft))
-        {
-            DrawPolyline(g, mesh.BottomLeft, wall);
-        }
+        DrawPolylineRange(g, mesh.Left, edge, startIndex, endIndex);
+        DrawPolylineRange(g, mesh.Right, edge, startIndex, endIndex);
+        DrawPolylineRange(g, mesh.Center, center, startIndex, endIndex);
 
-        if (showThickness && hasThickness && (_doc.Settings.SolidBottom || _doc.Settings.SolidRight))
+        if (!ShowSegments)
         {
-            DrawPolyline(g, mesh.BottomRight, wall);
-        }
-
-        if (showThickness && hasThickness && _doc.Settings.SolidLeft)
-        {
-            for (int i = 0; i < mesh.Center.Count; i += 4)
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                g.DrawLine(wall, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.BottomLeft[i]));
+                if (i % 4 == 0)
+                {
+                    g.DrawLine(rib, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.Right[i]));
+                }
             }
         }
 
-        if (showThickness && hasThickness && _doc.Settings.SolidRight)
+        if (showThickness && (settings.SolidBottom || settings.SolidLeft))
         {
-            for (int i = 0; i < mesh.Center.Count; i += 4)
+            DrawPolylineRange(g, mesh.BottomLeft, wall, startIndex, endIndex);
+        }
+
+        if (showThickness && (settings.SolidBottom || settings.SolidRight))
+        {
+            DrawPolylineRange(g, mesh.BottomRight, wall, startIndex, endIndex);
+        }
+
+        if (showThickness && settings.SolidLeft)
+        {
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                g.DrawLine(wall, WorldToScreenF(mesh.Right[i]), WorldToScreenF(mesh.BottomRight[i]));
+                if (i % 4 == 0)
+                {
+                    g.DrawLine(wall, WorldToScreenF(mesh.Left[i]), WorldToScreenF(mesh.BottomLeft[i]));
+                }
             }
         }
 
-        // Bottom face: draw connecting ribs under the road so the bottom is
-        // visible in the side/front views too (mirrors the 3D view's bottom).
-        if (showThickness && hasThickness && _doc.Settings.SolidBottom && !ShowSegments)
+        if (showThickness && settings.SolidRight)
         {
-            for (int i = 0; i < mesh.Center.Count; i += 4)
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                g.DrawLine(rib, WorldToScreenF(mesh.BottomLeft[i]), WorldToScreenF(mesh.BottomRight[i]));
+                if (i % 4 == 0)
+                {
+                    g.DrawLine(wall, WorldToScreenF(mesh.Right[i]), WorldToScreenF(mesh.BottomRight[i]));
+                }
+            }
+        }
+
+        if (showThickness && settings.SolidBottom && !ShowSegments)
+        {
+            for (int i = startIndex; i <= endIndex; i++)
+            {
+                if (i % 4 == 0)
+                {
+                    g.DrawLine(rib, WorldToScreenF(mesh.BottomLeft[i]), WorldToScreenF(mesh.BottomRight[i]));
+                }
+            }
+        }
+    }
+
+    private void DrawPolylineRange(Graphics g, IReadOnlyList<Vec3> points, Pen pen, int startIndex, int endIndex)
+    {
+        if (startIndex >= endIndex)
+        {
+            return;
+        }
+
+        PointF previous = WorldToScreenF(points[startIndex]);
+        for (int index = startIndex + 1; index <= endIndex; index++)
+        {
+            PointF current = WorldToScreenF(points[index]);
+            g.DrawLine(pen, previous, current);
+            previous = current;
+        }
+    }
+
+    private void DrawEdgeFeatures(Graphics g)
+    {
+        if (_doc == null)
+        {
+            return;
+        }
+
+        Track activeTrack = _doc.ActiveTrack;
+        const int stepsPerSegment = 24;
+
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
+
+            foreach (ChainFeature chainFeature in chain.CollectFeatures())
+            {
+                EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, stepsPerSegment, chainFeature, chain.Closed);
+                if (mesh.InnerTop.Count < 2)
+                {
+                    continue;
+                }
+
+                EdgeFeature feature = chainFeature.Feature;
+                int last = mesh.InnerTop.Count - 1;
+                bool strip = feature.Kind != EdgeFeatureKind.Guardrail;
+
+                // Draw the feature piecewise by span so only the active track's own
+                // portion is highlighted; the tracks it is welded to stay muted. This
+                // mirrors DrawAllTracks, which colors each span by its own track.
+                foreach (ChainSpan span in chain.Spans)
+                {
+                    int lo = Math.Max(span.StartPoint, chainFeature.StartPoint);
+                    int hi = Math.Min(span.EndPoint - 1, chainFeature.EndPoint - 1);
+                    if (lo > hi)
+                    {
+                        continue;
+                    }
+
+                    int startIndex = (lo - chainFeature.StartPoint) * stepsPerSegment;
+                    int endIndex = (hi - chainFeature.StartPoint) * stepsPerSegment;
+                    if (startIndex < 0)
+                    {
+                        startIndex = 0;
+                    }
+
+                    if (endIndex > last)
+                    {
+                        endIndex = last;
+                    }
+
+                    if (startIndex > endIndex)
+                    {
+                        continue;
+                    }
+
+                    bool isActive = ReferenceEquals(span.Track, activeTrack);
+                    using Pen pen = new Pen(isActive ? Color.FromArgb(155, 175, 255) : Color.FromArgb(92, 98, 114), isActive ? 2.0f : 1.4f);
+
+                    DrawPolylineRange(g, mesh.InnerTop, pen, startIndex, endIndex);
+
+                    if (feature.SolidBottom || feature.SolidInner)
+                    {
+                        DrawPolylineRange(g, mesh.InnerBase, pen, startIndex, endIndex);
+                    }
+
+                    if (strip)
+                    {
+                        DrawPolylineRange(g, mesh.OuterTop, pen, startIndex, endIndex);
+
+                        if (feature.SolidBottom || feature.SolidOuter)
+                        {
+                            DrawPolylineRange(g, mesh.OuterBase, pen, startIndex, endIndex);
+                        }
+                    }
+
+                    for (int i = startIndex; i <= endIndex; i += 4)
+                    {
+                        if (strip)
+                        {
+                            g.DrawLine(pen, WorldToScreenF(mesh.InnerTop[i]), WorldToScreenF(mesh.OuterTop[i]));
+                        }
+
+                        if (feature.SolidBottom && strip)
+                        {
+                            g.DrawLine(pen, WorldToScreenF(mesh.InnerBase[i]), WorldToScreenF(mesh.OuterBase[i]));
+                        }
+
+                        if (feature.SolidInner)
+                        {
+                            g.DrawLine(pen, WorldToScreenF(mesh.InnerTop[i]), WorldToScreenF(mesh.InnerBase[i]));
+                        }
+
+                        if (feature.SolidOuter && strip)
+                        {
+                            g.DrawLine(pen, WorldToScreenF(mesh.OuterTop[i]), WorldToScreenF(mesh.OuterBase[i]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void DrawInactivePoints(Graphics g)
+    {
+        if (_doc == null)
+        {
+            return;
+        }
+
+        Track activeTrack = _doc.ActiveTrack;
+        using Brush fill = new SolidBrush(Color.FromArgb(110, 115, 125));
+
+        foreach (Track track in _doc.Tracks)
+        {
+            if (ReferenceEquals(track, activeTrack))
+            {
+                continue;
+            }
+
+            foreach (RoadPoint point in track.Points)
+            {
+                PointF s = WorldToScreenF(point.Position);
+                g.FillEllipse(fill, s.X - 3, s.Y - 3, 6, 6);
             }
         }
     }
@@ -402,14 +637,15 @@ public sealed class Viewport2D : Control
             return;
         }
 
-        var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings);
-        double thickness = _doc.Settings.Thickness;
-        Vec3 down = new Vec3(0, 0, -1) * thickness;
+        bool activeClosed = _doc.Points.Count >= 3 && RoadDocument.PositionsMatch(_doc.Points[0].Position, _doc.Points[_doc.Points.Count - 1].Position);
+        var segments = SegmentLayout.Compute(_doc.Points, _doc.Settings, activeClosed);
         using Pen pen = new Pen(Color.FromArgb(255, 100, 220), 1.1f);
         foreach (SegmentLayout.Segment seg in segments)
         {
             Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
-            Vec3 a2 = a + down, b2 = b + down, c2 = c + down, d2 = d + down;
+            Vec3 downStart = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T0, activeClosed);
+            Vec3 downEnd = new Vec3(0, 0, -1) * RoadCurve.Thickness(_doc.Points, seg.T1, activeClosed);
+            Vec3 a2 = a + downStart, b2 = b + downEnd, c2 = c + downEnd, d2 = a2 + c2 - b2;
 
             // Top face: the base parallelogram Hammer reconstructs.
             g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(b));
@@ -417,17 +653,45 @@ public sealed class Viewport2D : Control
             g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(d));
             g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(a));
 
-            if (thickness > 0)
-            {
-                g.DrawLine(pen, WorldToScreenF(a2), WorldToScreenF(b2));
-                g.DrawLine(pen, WorldToScreenF(b2), WorldToScreenF(c2));
-                g.DrawLine(pen, WorldToScreenF(c2), WorldToScreenF(d2));
-                g.DrawLine(pen, WorldToScreenF(d2), WorldToScreenF(a2));
+            g.DrawLine(pen, WorldToScreenF(a2), WorldToScreenF(b2));
+            g.DrawLine(pen, WorldToScreenF(b2), WorldToScreenF(c2));
+            g.DrawLine(pen, WorldToScreenF(c2), WorldToScreenF(d2));
+            g.DrawLine(pen, WorldToScreenF(d2), WorldToScreenF(a2));
 
-                g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(a2));
-                g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(b2));
-                g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(c2));
-                g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(d2));
+            g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(a2));
+            g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(b2));
+            g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(c2));
+            g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(d2));
+        }
+    }
+
+    private void DrawFeatureSegments(Graphics g)
+    {
+        if (!ShowFeatureSegments || _doc == null)
+        {
+            return;
+        }
+
+        using Pen pen = new Pen(Color.FromArgb(80, 220, 255), 1.1f);
+
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
+
+            foreach (ChainFeature chainFeature in chain.CollectFeatures())
+            {
+                List<SegmentLayout.Segment> segments = SegmentLayout.ComputeFeatureSegments(chain, chainFeature);
+                foreach (SegmentLayout.Segment seg in segments)
+                {
+                    Vec3 a = seg.A, b = seg.B, c = seg.C, d = seg.D;
+                    g.DrawLine(pen, WorldToScreenF(a), WorldToScreenF(b));
+                    g.DrawLine(pen, WorldToScreenF(b), WorldToScreenF(c));
+                    g.DrawLine(pen, WorldToScreenF(c), WorldToScreenF(d));
+                    g.DrawLine(pen, WorldToScreenF(d), WorldToScreenF(a));
+                }
             }
         }
     }
@@ -499,28 +763,57 @@ public sealed class Viewport2D : Control
             return;
         }
 
+        // Snap the box corners to the grid (when snapping is enabled), so the
+        // selection window follows the snap setting like the point tool does.
+        GetBoxWorldBounds(out double hMin, out double hMax, out double vMin, out double vMax);
+
         using Pen pen = new Pen(Color.FromArgb(220, 220, 230))
         {
             DashStyle = DashStyle.Dash
         };
-        g.DrawRectangle(pen, RectangleFromPoints(_boxStart, _boxCurrent));
+
+        PointF tl = WorldToScreenF(PlaneVec(hMin, vMax, 0));
+        PointF br = WorldToScreenF(PlaneVec(hMax, vMin, 0));
+        g.DrawRectangle(pen, RectangleF.FromLTRB(tl.X, tl.Y, br.X, br.Y));
+
+        // Show the selection's world size next to the box.
+        double width = Math.Abs(hMax - hMin);
+        double height = Math.Abs(vMax - vMin);
+        (string hLabel, string vLabel) = PlaneLabels();
+        string size = $"{hLabel}: {width:0.#}  {vLabel}: {height:0.#}";
+
+        using Font f = new Font("Segoe UI", 8);
+        SizeF textSize = g.MeasureString(size, f);
+        PointF labelAt = new PointF(tl.X, tl.Y - textSize.Height - 3);
+        using Brush bg = new SolidBrush(Color.FromArgb(180, 24, 24, 28));
+        g.FillRectangle(bg, labelAt.X, labelAt.Y, textSize.Width + 6, textSize.Height + 4);
+        using Brush text = new SolidBrush(Color.FromArgb(235, 235, 240));
+        g.DrawString(size, f, text, labelAt.X + 3, labelAt.Y + 2);
     }
 
-    private void DrawPolyline(Graphics g, IReadOnlyList<Vec3> pts, Pen pen)
+    /// <summary>World-space bounds of the current box selection, with the corners
+    /// snapped to the grid when snapping is enabled.</summary>
+    private void GetBoxWorldBounds(out double hMin, out double hMax, out double vMin, out double vMax)
     {
-        if (pts.Count < 2)
-        {
-            return;
-        }
-
-        PointF prev = WorldToScreenF(pts[0]);
-        for (int i = 1; i < pts.Count; i++)
-        {
-            PointF cur = WorldToScreenF(pts[i]);
-            g.DrawLine(pen, prev, cur);
-            prev = cur;
-        }
+        double outOfPlane = GetDefaultOutOfPlane();
+        Vec3 a = Snap(ScreenToWorld(_boxStart, outOfPlane));
+        Vec3 b = Snap(ScreenToWorld(_boxCurrent, outOfPlane));
+        double ah = PlaneHorizontal(a);
+        double av = PlaneVertical(a);
+        double bh = PlaneHorizontal(b);
+        double bv = PlaneVertical(b);
+        hMin = Math.Min(ah, bh);
+        hMax = Math.Max(ah, bh);
+        vMin = Math.Min(av, bv);
+        vMax = Math.Max(av, bv);
     }
+
+    private (string h, string v) PlaneLabels() => _plane switch
+    {
+        PlaneKind.Top => ("X", "Y"),
+        PlaneKind.Front => ("X", "Z"),
+        _ => ("Y", "Z")
+    };
 
     // ----- world/screen mapping -----
 
@@ -627,6 +920,9 @@ public sealed class Viewport2D : Control
     {
         base.OnMouseDown(e);
         Focus();
+        _hoverToolTip.Hide(this);
+        _hoverTimer.Stop();
+        _hoverWeldIndex = -2;
 
         if (e.Button == MouseButtons.Middle || e.Button == MouseButtons.Right)
         {
@@ -677,6 +973,7 @@ public sealed class Viewport2D : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        UpdateHoverTooltip(e.Location);
 
         if (_panning)
         {
@@ -706,10 +1003,24 @@ public sealed class Viewport2D : Control
                 double outOfPlane = OutOfPlane(_dragOrigin);
                 Vec3 world = Snap(ScreenToWorld(e.Location, outOfPlane));
                 Vec3 delta = world - _dragOrigin;
+                bool breakWeld = (ModifierKeys & Keys.Shift) != 0;
 
                 for (int k = 0; k < _moveIndices.Count; k++)
                 {
-                    _doc.Points[_moveIndices[k]].Position = _moveOrigins[k] + delta;
+                    int pointIndex = _moveIndices[k];
+                    Vec3 newPosition = _moveOrigins[k] + delta;
+
+                    if (breakWeld)
+                    {
+                        // Shift+drag moves only this point, leaving any welded
+                        // points in other tracks behind (breaks the weld).
+                        _doc.Points[pointIndex].Position = newPosition;
+                    }
+                    else
+                    {
+                        Vec3 oldPosition = _doc.Points[pointIndex].Position;
+                        _doc.MovePointWelded(_doc.ActiveTrack, pointIndex, newPosition, oldPosition);
+                    }
                 }
 
                 _doc.NotifyChanged();
@@ -774,7 +1085,7 @@ public sealed class Viewport2D : Control
 
             if (_boxSelecting)
             {
-                var indices = PointsInBox(RectangleFromPoints(_boxStart, _boxCurrent));
+                var indices = PointsInBox();
                 BoxSelected?.Invoke(indices, (ModifierKeys & Keys.Control) != 0);
             }
             else if ((ModifierKeys & Keys.Control) != 0)
@@ -782,7 +1093,7 @@ public sealed class Viewport2D : Control
                 PointAddBegin?.Invoke();
                 double outOfPlane = GetDefaultOutOfPlane();
                 Vec3 world = Snap(ScreenToWorld(e.Location, outOfPlane));
-                _doc.Points.Add(new RoadPoint(world, GetDefaultWidth(), GetDefaultBank()));
+                _doc.Points.Add(new RoadPoint(world, GetDefaultWidth(), GetDefaultBank(), GetDefaultThickness()));
                 _doc.NotifyChanged();
                 PointAdded?.Invoke(_doc.Points.Count - 1);
             }
@@ -814,6 +1125,14 @@ public sealed class Viewport2D : Control
         Invalidate();
     }
 
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        _hoverToolTip.Hide(this);
+        _hoverTimer.Stop();
+        _hoverWeldIndex = -2;
+    }
+
     private bool TryHitPoint(Point s, out int index)
     {
         index = -1;
@@ -837,7 +1156,79 @@ public sealed class Viewport2D : Control
         return index >= 0;
     }
 
-    private List<int> PointsInBox(Rectangle r)
+    /// <summary>Debounced hint when hovering a welded (joined) track node, i.e. a
+    /// point whose position is shared with another track. The pointer must hold on
+    /// the node for the timer interval before the tooltip appears; it hides when the
+    /// pointer leaves the node, starts dragging/panning/box-selecting, or leaves the
+    /// control.</summary>
+    private void UpdateHoverTooltip(Point location)
+    {
+        _hoverLocation = location;
+
+        int target = -1;
+        if (!_panning && _dragIndex < 0 && !_dragging && !_boxSelecting && _doc != null
+            && _doc.Points != null && TryHitPoint(location, out int idx)
+            && idx >= 0 && idx < _doc.Points.Count
+            && IsWeldPoint(_doc.Points[idx].Position))
+        {
+            target = idx;
+        }
+
+        if (target == _hoverWeldIndex)
+        {
+            return;
+        }
+
+        _hoverWeldIndex = target;
+        _hoverTimer.Stop();
+        _hoverToolTip.Hide(this);
+
+        if (target >= 0)
+        {
+            _hoverTimer.Start();
+        }
+    }
+
+    private void OnHoverTimerTick(object sender, EventArgs e)
+    {
+        _hoverTimer.Stop();
+        if (_hoverWeldIndex < 0)
+        {
+            return;
+        }
+
+        _hoverToolTip.Show("Hold Shift + M1 and drag to disconnect", this, _hoverLocation.X + 14, _hoverLocation.Y + 14, 6000);
+    }
+
+    /// <summary>True when a position is shared by more than one track, i.e. it is a
+    /// welded/joined junction node.</summary>
+    private bool IsWeldPoint(Vec3 position)
+    {
+        if (_doc == null)
+        {
+            return false;
+        }
+
+        int matches = 0;
+        foreach (Track track in _doc.Tracks)
+        {
+            foreach (RoadPoint point in track.Points)
+            {
+                if (RoadDocument.PositionsMatch(point.Position, position))
+                {
+                    matches++;
+                    if (matches >= 2)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private List<int> PointsInBox()
     {
         var result = new List<int>();
         if (_doc == null)
@@ -845,23 +1236,18 @@ public sealed class Viewport2D : Control
             return result;
         }
 
+        GetBoxWorldBounds(out double hMin, out double hMax, out double vMin, out double vMax);
         for (int i = 0; i < _doc.Points.Count; i++)
         {
-            PointF s = WorldToScreenF(_doc.Points[i].Position);
-            if (r.Contains((int)s.X, (int)s.Y))
+            double h = PlaneHorizontal(_doc.Points[i].Position);
+            double v = PlaneVertical(_doc.Points[i].Position);
+            if (h >= hMin && h <= hMax && v >= vMin && v <= vMax)
             {
                 result.Add(i);
             }
         }
 
         return result;
-    }
-
-    private static Rectangle RectangleFromPoints(Point a, Point b)
-    {
-        int x = Math.Min(a.X, b.X);
-        int y = Math.Min(a.Y, b.Y);
-        return new Rectangle(x, y, Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
     }
 
     private double GetDefaultOutOfPlane()
@@ -895,5 +1281,16 @@ public sealed class Viewport2D : Control
         }
 
         return 0;
+    }
+
+    private double GetDefaultThickness()
+    {
+        int sel = GetSelectedIndex();
+        if (sel >= 0 && _doc != null && sel < _doc.Points.Count)
+        {
+            return _doc.Points[sel].Thickness;
+        }
+
+        return 64;
     }
 }

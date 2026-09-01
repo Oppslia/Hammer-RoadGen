@@ -7,93 +7,383 @@ namespace RoadGen.Core;
 /// <summary>Turns a road document into a complete VMF file.</summary>
 public static class RoadGenerator
 {
-    public static string GenerateVmf(RoadDocument doc)
+    public static string GenerateVmf(RoadDocument document)
     {
-        var pts = doc.Points;
-        var s = doc.Settings;
-
-        if (pts.Count < 2)
-        {
-            throw new InvalidOperationException("The road needs at least two control points.");
-        }
-
-        if (s.Power < 2 || s.Power > 4)
-        {
-            throw new InvalidOperationException("Displacement power must be 2, 3 or 4.");
-        }
-
-        int res = 1 << s.Power;
-        double maxSegment = Math.Max(1.0, s.SegmentLength);
-
-        var sb = new StringBuilder();
-        sb.Append(Vmf.Header);
+        StringBuilder output = new StringBuilder();
+        output.Append(Vmf.Header);
 
         int solidId = 2;
-        double textureV = 0;
-        var walker = new FrameWalker();
+        bool generatedAnyTrack = false;
 
-        for (int seg = 0; seg < pts.Count - 1; seg++)
+        List<RoadChain> chains = document.BuildChains();
+
+        foreach (RoadChain chain in chains)
         {
-            double arcLength = ApproximateArcLength(pts, seg);
-            int subdiv = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
-
-            for (int k = 0; k < subdiv; k++)
+            if (chain.Points.Count < 2)
             {
-                double t0 = seg + (double)k / subdiv;
-                double t1 = seg + (double)(k + 1) / subdiv;
-                Vec3[,] grid = RoadSurface.SampleGrid(pts, t0, t1, res, walker);
-                sb.Append(DisplacementSegment.Build(solidId++, grid, s, textureV, out double advance));
-                textureV += advance;
+                continue;
+            }
+
+            AppendDisplacementChain(output, chain, ref solidId);
+            generatedAnyTrack = true;
+        }
+
+        // Edge features (sidewalks, guardrails) follow each chain so a
+        // joined road's sidewalk continues through the junction.
+        foreach (RoadChain chain in chains)
+        {
+            AppendEdgeFeatures(output, chain, ref solidId);
+        }
+
+        if (!generatedAnyTrack)
+        {
+            throw new InvalidOperationException("Add at least two control points to a track.");
+        }
+
+        output.Append(Vmf.Footer);
+        return output.ToString();
+    }
+
+    private static void AppendEdgeFeatures(StringBuilder output, RoadChain chain, ref int solidId)
+    {
+        if (chain.Points.Count < 2)
+        {
+            return;
+        }
+
+        List<ChainFeature> features = chain.CollectFeatures();
+        if (features.Count == 0)
+        {
+            return;
+        }
+
+        Vec3 up = new Vec3(0, 0, 1);
+        double twist = ClosedLoopTwistOf(chain);
+
+        foreach (ChainFeature chainFeature in features)
+        {
+            EdgeFeature feature = chainFeature.Feature;
+
+            double sign = feature.LeftSide ? -1.0 : 1.0;
+            FrameWalker walker = new FrameWalker();
+            double textureV = 0;
+
+            for (int segmentIndex = 0; segmentIndex < chain.Points.Count - 1; segmentIndex++)
+            {
+                // Each segment belongs to a single track's span, so the displacement
+                // optimization (segment length and resolution) must come from that
+                // track's settings — not the chain's (first track's) settings. This
+                // keeps each span's sidewalk brush count matching what that track
+                // produces on its own, exactly like the road body does.
+                RoadSettings segmentSettings = SettingsForSegment(chain, segmentIndex);
+                int power = Math.Clamp(segmentSettings.Power, 2, 4);
+                int resolution = 1 << power;
+                double maxSegment = Math.Max(1.0, segmentSettings.SegmentLength);
+
+                RoadSettings featureSettings = new RoadSettings
+                {
+                    Material = feature.Material,
+                    TextureScale = segmentSettings.TextureScale,
+                    LightmapScale = segmentSettings.LightmapScale,
+                    Power = power,
+                    // A left strip stores its columns outer-first, so the builder's
+                    // "left wall" (column 0) is actually the outer face and vice versa.
+                    SolidLeft = feature.LeftSide ? feature.SolidOuter : feature.SolidInner,
+                    SolidRight = feature.LeftSide ? feature.SolidInner : feature.SolidOuter,
+                    SolidBottom = feature.SolidBottom
+                };
+
+                double arcLength = RoadCurve.ArcLength(chain.Points, segmentIndex, chain.Closed);
+                int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+
+                for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
+                {
+                    double t0 = segmentIndex + (double)pieceIndex / subdivision;
+                    double t1 = segmentIndex + (double)(pieceIndex + 1) / subdivision;
+
+                    // Always sample so the frame walker advances over the whole chain
+                    // (matching the road's frame). Pieces outside this feature's range
+                    // are walked but not written.
+                    Vec3[,] grid = SampleEdgeGrid(chain.Points, t0, t1, resolution, walker, feature, sign, chainFeature, up, chain.Closed, twist);
+
+                    if (t0 < chainFeature.StartPoint - 1e-9 || t1 > chainFeature.EndPoint - 1 + 1e-9)
+                    {
+                        continue;
+                    }
+
+                    double thicknessStart = FeatureThicknessAt(chainFeature, t0);
+                    double thicknessEnd = FeatureThicknessAt(chainFeature, t1);
+                    output.Append(DisplacementSegment.Build(solidId++, grid, thicknessStart, thicknessEnd, featureSettings, textureV, out double textureAdvance));
+                    textureV += textureAdvance;
+                }
+            }
+        }
+    }
+
+    private static Vec3[,] SampleEdgeGrid(
+        IReadOnlyList<RoadPoint> points,
+        double t0,
+        double t1,
+        int resolution,
+        FrameWalker walker,
+        EdgeFeature feature,
+        double sign,
+        ChainFeature chainFeature,
+        Vec3 up,
+        bool closed = false,
+        double twist = 0)
+    {
+        int n = resolution + 1;
+        Vec3[,] grid = new Vec3[n, n];
+        double maxT = Math.Max(1.0, points.Count - 1);
+
+        for (int row = 0; row < n; row++)
+        {
+            double t = t0 + (t1 - t0) * row / resolution;
+            Vec3 pos = RoadCurve.Position(points, t, closed);
+            Vec3 tan = RoadCurve.Tangent(points, t, closed);
+            double roadWidth = RoadCurve.Width(points, t, closed);
+            double bank = RoadCurve.Bank(points, t, closed) * Math.PI / 180.0;
+            RoadFrame frame = walker.Step(pos, tan, bank);
+
+            // A closed loop's frame must be twist-corrected identically to the road
+            // surface, otherwise the sidewalk decouples from the road edge.
+            if (twist != 0)
+            {
+                frame = RoadSurface.TwistCorrected(frame, t / maxT, twist);
+            }
+
+            EdgeFeaturePoint point = FeaturePointAt(chainFeature, t);
+            double stripWidth = feature.Kind == EdgeFeatureKind.Guardrail ? 8.0 : Math.Max(0.5, point.Width);
+            double topOffset = point.TopOffset;
+
+            // Feature bank tilts the strip across its width (cross-slope).
+            double cross = Math.Tan(point.BankDegrees * Math.PI / 180.0) * stripWidth;
+
+            Vec3 edge = pos + frame.B * (sign * roadWidth / 2.0);
+            Vec3 inner = edge + frame.B * (sign * feature.Offset) + up * topOffset;
+            Vec3 outer = edge + frame.B * (sign * (feature.Offset + stripWidth)) + up * (topOffset + cross);
+
+            for (int col = 0; col < n; col++)
+            {
+                double u = (double)col / resolution;
+
+                // The displacement base face is anchored at column 0 with its cross
+                // direction matching the road's (+B). A left strip runs the other way
+                // (-B), so its columns are stored outer-first to keep the brush
+                // winding consistent; otherwise Hammer rejects the solid as invalid.
+                grid[row, col] = feature.LeftSide
+                    ? outer + (inner - outer) * u
+                    : inner + (outer - inner) * u;
             }
         }
 
-        sb.Append(Vmf.Footer);
-        return sb.ToString();
+        return grid;
     }
 
-    /// <summary>Turns a road document into a VMF file made of plain solid brushes
-    /// (two tetrahedra per sampled cell) instead of displacement surfaces.</summary>
-    [Obsolete("Experimental brush export. Disabled by default; uncomment the UI wiring to use it.")]
-    public static string GenerateBrushes(RoadDocument doc)
+    private static EdgeFeaturePoint FeaturePointAt(ChainFeature chainFeature, double t)
     {
-        var pts = doc.Points;
-        var s = doc.Settings;
-
-        if (pts.Count < 2)
+        double localT = t - chainFeature.StartPoint;
+        int n = chainFeature.Points.Count;
+        if (n == 0)
         {
-            throw new InvalidOperationException("The road needs at least two control points.");
+            return new EdgeFeaturePoint();
         }
 
-        int power = Math.Clamp(s.Power, 2, 4);
-        int res = 1 << power;
-        double maxSegment = Math.Max(1.0, s.SegmentLength);
+        if (n == 1 || localT <= 0)
+        {
+            return chainFeature.Points[0];
+        }
 
-        var sb = new StringBuilder();
-        sb.Append(Vmf.Header);
+        if (localT >= n - 1)
+        {
+            return chainFeature.Points[n - 1];
+        }
+
+        int index = (int)Math.Floor(localT);
+        if (index > n - 2)
+        {
+            index = n - 2;
+        }
+
+        double u = localT - index;
+        EdgeFeaturePoint first = chainFeature.Points[index];
+        EdgeFeaturePoint second = chainFeature.Points[index + 1];
+
+        // Linear interpolation between control points, matching the road's own
+        // width/bank/thickness interpolation so the strip stays smooth.
+        return new EdgeFeaturePoint
+        {
+            Width = first.Width + (second.Width - first.Width) * u,
+            BottomOffset = first.BottomOffset + (second.BottomOffset - first.BottomOffset) * u,
+            TopOffset = first.TopOffset + (second.TopOffset - first.TopOffset) * u,
+            BankDegrees = first.BankDegrees + (second.BankDegrees - first.BankDegrees) * u
+        };
+    }
+
+    private static double FeatureThicknessAt(ChainFeature chainFeature, double t)
+    {
+        EdgeFeaturePoint point = FeaturePointAt(chainFeature, t);
+        return point.TopOffset - point.BottomOffset;
+    }
+
+    private static void AppendDisplacementChain(StringBuilder output, RoadChain chain, ref int solidId)
+    {
+        List<RoadPoint> points = chain.Points;
+
+        double textureV = 0;
+        FrameWalker walker = new FrameWalker();
+        double twist = ClosedLoopTwistOf(chain);
+
+        for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
+        {
+            RoadSettings settings = SettingsForSegment(chain, segmentIndex);
+            int power = Math.Clamp(settings.Power, 2, 4);
+            int resolution = 1 << power;
+            double maxSegment = Math.Max(1.0, settings.SegmentLength);
+
+            double arcLength = RoadCurve.ArcLength(points, segmentIndex, chain.Closed);
+            int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+
+            for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
+            {
+                double startT = segmentIndex + (double)pieceIndex / subdivision;
+                double endT = segmentIndex + (double)(pieceIndex + 1) / subdivision;
+                Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker, chain.Closed, twist);
+                double thicknessStart = RoadCurve.Thickness(points, startT, chain.Closed);
+                double thicknessEnd = RoadCurve.Thickness(points, endT, chain.Closed);
+                output.Append(DisplacementSegment.Build(solidId++, grid, thicknessStart, thicknessEnd, settings, textureV, out double textureAdvance));
+                textureV += textureAdvance;
+            }
+        }
+    }
+
+    /// <summary>Measure the twist a closed loop accumulates across the seam so the
+    /// exported cross-section returns to its starting orientation (matches the
+    /// preview).</summary>
+    private static double ClosedLoopTwistOf(RoadChain chain)
+    {
+        if (!chain.Closed || chain.Points.Count < 3)
+        {
+            return 0;
+        }
+
+        // The frame walker's parallel transport depends on the chords between
+        // consecutive samples, so a coarse walker (one step per control point)
+        // measures a DIFFERENT holonomy than the fine walker the export actually
+        // uses to build geometry. Step the measure walker over the EXACT same
+        // samples the export generates (per-track resolution and subdivision), so
+        // the measured twist matches the frame the exported road really carries —
+        // otherwise the exported VMF still twists at the seam even after the
+        // preview fix.
+        IReadOnlyList<RoadPoint> points = chain.Points;
+        FrameWalker measure = new FrameWalker();
+        RoadFrame first = default;
+        RoadFrame last = default;
+
+        for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
+        {
+            RoadSettings settings = SettingsForSegment(chain, segmentIndex);
+            int resolution = 1 << Math.Clamp(settings.Power, 2, 4);
+            double maxSegment = Math.Max(1.0, settings.SegmentLength);
+            double arcLength = RoadCurve.ArcLength(points, segmentIndex, chain.Closed);
+            int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+
+            for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
+            {
+                double startT = segmentIndex + (double)pieceIndex / subdivision;
+                double endT = segmentIndex + (double)(pieceIndex + 1) / subdivision;
+                for (int row = 0; row <= resolution; row++)
+                {
+                    double t = startT + (endT - startT) * row / resolution;
+                    Vec3 pos = RoadCurve.Position(points, t, closed: true);
+                    Vec3 tan = RoadCurve.Tangent(points, t, closed: true);
+                    double bank = RoadCurve.Bank(points, t, closed: true) * Math.PI / 180.0;
+                    RoadFrame f = measure.Step(pos, tan, bank);
+                    if (segmentIndex == 0 && pieceIndex == 0 && row == 0)
+                    {
+                        first = f;
+                    }
+
+                    last = f;
+                }
+            }
+        }
+
+        return RoadSurface.ClosedLoopTwist(first, last);
+    }
+
+    private static RoadSettings SettingsForSegment(RoadChain chain, int segmentIndex)
+    {
+        foreach (ChainSpan span in chain.Spans)
+        {
+            if (segmentIndex >= span.StartPoint && segmentIndex < span.EndPoint - 1)
+            {
+                return span.Track.Settings;
+            }
+        }
+
+        return chain.Settings;
+    }
+
+    /// <summary>Turns every track into a VMF file made of plain solid brushes
+    /// (two tetrahedra per sampled cell) instead of displacement surfaces.</summary>
+    [Obsolete("Experimental brush export. Disabled by default; uncomment the UI wiring to use it.")]
+    public static string GenerateBrushes(RoadDocument document)
+    {
+        StringBuilder output = new StringBuilder();
+        output.Append(Vmf.Header);
 
         int solidId = 2;
-        var walker = new FrameWalker();
+        bool generatedAnyTrack = false;
 
-        for (int seg = 0; seg < pts.Count - 1; seg++)
+        foreach (RoadChain chain in document.BuildChains())
         {
-            double arcLength = ApproximateArcLength(pts, seg);
-            int subdiv = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
-
-            for (int k = 0; k < subdiv; k++)
+            if (chain.Points.Count < 2)
             {
-                double t0 = seg + (double)k / subdiv;
-                double t1 = seg + (double)(k + 1) / subdiv;
-                Vec3[,] grid = RoadSurface.SampleGrid(pts, t0, t1, res, walker);
+                continue;
+            }
+
+            AppendBrushChain(output, chain, ref solidId);
+            generatedAnyTrack = true;
+        }
+
+        if (!generatedAnyTrack)
+        {
+            throw new InvalidOperationException("Add at least two control points to a track.");
+        }
+
+        output.Append(Vmf.Footer);
+        return output.ToString();
+    }
+
+    private static void AppendBrushChain(StringBuilder output, RoadChain chain, ref int solidId)
+    {
+        List<RoadPoint> points = chain.Points;
+
+        FrameWalker walker = new FrameWalker();
+        double twist = ClosedLoopTwistOf(chain);
+
+        for (int segmentIndex = 0; segmentIndex < points.Count - 1; segmentIndex++)
+        {
+            RoadSettings settings = SettingsForSegment(chain, segmentIndex);
+            int power = Math.Clamp(settings.Power, 2, 4);
+            int resolution = 1 << power;
+            double maxSegment = Math.Max(1.0, settings.SegmentLength);
+
+            double arcLength = RoadCurve.ArcLength(points, segmentIndex, chain.Closed);
+            int subdivision = Math.Max(1, (int)Math.Round(arcLength / maxSegment));
+
+            for (int pieceIndex = 0; pieceIndex < subdivision; pieceIndex++)
+            {
+                double startT = segmentIndex + (double)pieceIndex / subdivision;
+                double endT = segmentIndex + (double)(pieceIndex + 1) / subdivision;
+                Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker, chain.Closed, twist);
+                double brushThickness = RoadCurve.Thickness(points, segmentIndex, chain.Closed);
 #pragma warning disable CS0618 // BrushSegment is experimental/deprecated
-                sb.Append(BrushSegment.Build(grid, s, ref solidId));
+                output.Append(BrushSegment.Build(grid, brushThickness, settings, ref solidId));
 #pragma warning restore CS0618
             }
         }
-
-        sb.Append(Vmf.Footer);
-        return sb.ToString();
     }
-
-    private static double ApproximateArcLength(IReadOnlyList<RoadPoint> pts, int segment)
-        => RoadCurve.ArcLength(pts, segment);
 }
