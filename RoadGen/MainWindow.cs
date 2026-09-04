@@ -147,6 +147,7 @@ public sealed partial class MainWindow : Form
     private bool _loading;
     private string _currentTrackPath;
     private string _layoutVmfPath;
+    private bool _layoutExtraMounted;
     private System.IO.FileSystemWatcher _layoutWatcher;
     private System.Windows.Forms.Timer _layoutReloadTimer;
     private bool _dirty;
@@ -343,7 +344,7 @@ public sealed partial class MainWindow : Form
         };
         statusBar.Items.Add(new ToolStripStatusLabel
         {
-            Text = "2D: ctrl+click add, drag to move, shift+drag breaks a weld, drag empty space to box-select  •  3D: right-drag orbit, middle-drag pan, click select  •  [ / ] change grid",
+            Text = "2D: ctrl+click add, drag to move, shift+drag breaks a weld, drag empty space to box-select  •  3D: freelook — WASD/QE move, hold right-drag to look, wheel fly (Shift+wheel speed), click select  •  [ / ] change grid",
             ForeColor = Color.FromArgb(200, 205, 215)
         });
         _statusMounted.ForeColor = Color.FromArgb(225, 230, 240);
@@ -1404,10 +1405,39 @@ public sealed partial class MainWindow : Form
             InvalidateAll();
 
             StartLayoutWatch(dlg.FileName);
+            MountLayoutMaterials(dlg.FileName);
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, "Import failed:\n" + ex.Message, "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>Applies the NON-NATIVE layout-content mount (see NonNativeHelpers — a RoadGen
+    /// extra, NOT Hammer behavior) so a decompiled map's own materials resolve. Flagged as
+    /// such in the status tooltip via <see cref="NonNativeHelpers.LayoutExtraMountNote"/>.</summary>
+    private void MountLayoutMaterials(string vmfPath)
+    {
+        try
+        {
+            if (_v3d.MaterialCache.AddContentRoots(NonNativeHelpers.LayoutMaterialContentRoots(vmfPath)))
+            {
+                _layoutExtraMounted = true;
+
+                // Re-resolving may now find materials that were previously missing; refresh the
+                // status/report once the first textured frame settles.
+                if (_btnTextures.Checked)
+                {
+                    _missingReportTimer.Stop();
+                    _missingReportTimer.Start();
+                }
+
+                UpdateTextureStatus();
+            }
+        }
+        catch (Exception)
+        {
+            // Mounting must never break the import.
         }
     }
 
@@ -2771,6 +2801,17 @@ public sealed partial class MainWindow : Form
             foreach (var mount in mounts)
             {
                 tooltip.Append("  ").Append(mount.Describe()).Append('\n');
+            }
+
+            if (_layoutExtraMounted)
+            {
+                tooltip.Append('\n').Append(NonNativeHelpers.LayoutExtraMountNote).Append('\n');
+            }
+
+            int water = _v3d.MaterialCache.WaterMaterialCount;
+            if (water > 0)
+            {
+                tooltip.Append('\n').Append(water).Append(' ').Append(NonNativeHelpers.WaterApproxNote).Append('\n');
             }
 
             if (missing > 0)

@@ -23,6 +23,12 @@ public sealed class VtfMaterialCache
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private Bitmap _fallback;
 
+    // Water detection: material path -> whether its .vmt marks it as water (%compilewater or
+    // $surfaceprop "water"), plus the shared flat surface water faces are drawn with.
+    private readonly Dictionary<string, bool> _waterCache =
+        new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    private Bitmap _water;
+
     /// <summary>Mounted content folders in search order. Higher-priority content (a game's own
     /// "tf") is searched before shared content ("hl2"), like Hammer's mounted search paths.</summary>
     public IReadOnlyList<ContentMount> Mounts => _mounts;
@@ -94,11 +100,83 @@ public sealed class VtfMaterialCache
         _missing.Clear();
     }
 
+    /// <summary>ROADGEN EXTENSION (NOT Hammer): appends extra mounted content folders without
+    /// tearing down the existing mounts — used to search the imported layout's decompile
+    /// folder. Standard Hammer only mounts gameinfo content + the game/mod dirs, so these
+    /// map-local loose materials would be missing there. Returns true when at least one new
+    /// mountable folder was added (cached textures and the missing log are then dropped so
+    /// lookups re-run against the enlarged search path list).</summary>
+    public bool AddContentRoots(IEnumerable<string> contentFolders)
+    {
+        bool changed = false;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (ContentMount mount in _mounts)
+        {
+            seen.Add(mount.ContentPath);
+        }
+
+        if (contentFolders != null)
+        {
+            foreach (string folder in contentFolders)
+            {
+                if (string.IsNullOrWhiteSpace(folder))
+                {
+                    continue;
+                }
+
+                string normalized = folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (!seen.Add(normalized))
+                {
+                    continue;
+                }
+
+                ContentMount mount = new ContentMount(normalized);
+                if (mount.IsMountable)
+                {
+                    _mounts.Add(mount);
+                    changed = true;
+                }
+                else
+                {
+                    mount.Dispose();
+                }
+            }
+        }
+
+        if (changed)
+        {
+            ClearCache();
+            _missing.Clear();
+        }
+
+        return changed;
+    }
+
     /// <summary>True when <paramref name="texture"/> is the missing-texture fallback.</summary>
     public bool IsFallback(Bitmap texture) => ReferenceEquals(texture, _fallback);
 
     /// <summary>Number of distinct requested materials that fell back to the checkerboard.</summary>
     public int MissingMaterialCount => _missing.Count;
+
+    /// <summary>Number of distinct water materials currently shown as the flat approximation.
+    /// Water is never "missing" — it just has no plain texture to decode, so it is drawn with
+    /// the shared water surface instead.</summary>
+    public int WaterMaterialCount
+    {
+        get
+        {
+            int count = 0;
+            foreach (bool isWater in _waterCache.Values)
+            {
+                if (isWater)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+    }
 
     /// <summary>The missing-material log: material path -> why it could not be loaded.
     /// Intended for a missing-materials report (and as groundwork for a material browser).</summary>
@@ -118,6 +196,13 @@ public sealed class VtfMaterialCache
             return cached;
         }
 
+        // Water materials carry no $basetexture diffuse VTF (they are engine-shader driven),
+        // so before treating them as missing we check the same marker Hammer uses.
+        if (IsWaterMaterial(materialPath))
+        {
+            return GetWaterBitmap();
+        }
+
         Bitmap loaded;
         string missReason;
         if (!TryLoad(materialPath, out loaded, out missReason))
@@ -132,6 +217,124 @@ public sealed class VtfMaterialCache
 
         _cache[materialPath] = loaded;
         return loaded;
+    }
+
+    /// <summary>True when the material's .vmt marks it as water — the same test Hammer uses
+    /// (CMaterial::IsWater: a "%compilewater" var, or $surfaceprop "water"). Water .vmts have
+    /// no $basetexture diffuse VTF, so without this they'd be mis-reported as missing.</summary>
+    public bool IsWaterMaterial(string materialPath)
+    {
+        if (string.IsNullOrWhiteSpace(materialPath))
+        {
+            return false;
+        }
+
+        string relative = materialPath.Trim().TrimStart('/').Replace('\\', '/');
+        if (_waterCache.TryGetValue(relative, out bool known))
+        {
+            return known;
+        }
+
+        bool isWater = false;
+        byte[] vmt = TryFindBytes(relative + ".vmt");
+        if (vmt != null)
+        {
+            try
+            {
+                string text = System.Text.Encoding.ASCII.GetString(vmt);
+                isWater = text.IndexOf("%compilewater", StringComparison.OrdinalIgnoreCase) >= 0
+                       || VmtKeyHasValue(text, "surfaceprop", "water");
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        _waterCache[relative] = isWater;
+        return isWater;
+    }
+
+    /// <summary>Shared flat water surface used when a material is water. NON-NATIVE: this is a
+    /// RoadGen approximation (NonNativeHelpers.WaterSurfaceColor); Hammer runs the engine Water
+    /// shader instead, which a software rasterizer cannot.</summary>
+    private Bitmap GetWaterBitmap()
+    {
+        if (_water == null)
+        {
+            _water = new Bitmap(1, 1, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            _water.SetPixel(0, 0, RoadGen.NonNativeHelpers.WaterSurfaceColor);
+        }
+
+        return _water;
+    }
+
+    /// <summary>True when a .vmt's <paramref name="keyName"/> (e.g. "surfaceprop") has the value
+    /// <paramref name="expectedValue"/> (e.g. "water"). Tolerates quoted/bare keys and
+    /// quoted/bare values, mirroring ParseVmtBaseTexture.</summary>
+    private static bool VmtKeyHasValue(string text, string keyName, string expectedValue)
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '$' && text[i] != '%')
+            {
+                continue;
+            }
+
+            int identEnd = i + 1;
+            while (identEnd < text.Length &&
+                   (char.IsLetterOrDigit(text[identEnd]) || text[identEnd] == '_'))
+            {
+                identEnd++;
+            }
+
+            if (!text.Substring(i + 1, identEnd - i - 1).Equals(keyName, StringComparison.OrdinalIgnoreCase))
+            {
+                i = identEnd;
+                continue;
+            }
+
+            int p = identEnd;
+            if (p < text.Length && text[p] == '"')
+            {
+                p = SkipVmtWhitespace(text, p + 1); // quoted key's closing quote
+            }
+            else
+            {
+                p = SkipVmtWhitespace(text, p);
+            }
+
+            if (p >= text.Length)
+            {
+                return false;
+            }
+
+            string value;
+            if (text[p] == '"')
+            {
+                int vEnd = text.IndexOf('"', p + 1);
+                if (vEnd < 0)
+                {
+                    return false;
+                }
+
+                value = text.Substring(p + 1, vEnd - p - 1);
+            }
+            else
+            {
+                int vEnd = p;
+                while (vEnd < text.Length && text[vEnd] != ' ' && text[vEnd] != '\t' &&
+                       text[vEnd] != '\r' && text[vEnd] != '\n' && text[vEnd] != '}')
+                {
+                    vEnd++;
+                }
+
+                value = text.Substring(p, vEnd - p);
+            }
+
+            return value.Trim().Equals(expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     /// <summary>Loads a material the way Hammer does: find the material's .vmt across the
@@ -234,6 +437,13 @@ public sealed class VtfMaterialCache
             }
         }
 
+        if (WaterMaterialCount > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine(WaterMaterialCount + " water material(s) shown as a flat colour — " +
+                "RoadGen approximation (Hammer renders shader water).");
+        }
+
         sb.AppendLine();
         sb.AppendLine("Mounted content folders (" + _mounts.Count + "):");
         if (_mounts.Count == 0)
@@ -261,6 +471,9 @@ public sealed class VtfMaterialCache
         _cache.Clear();
         _fallback?.Dispose();
         _fallback = null;
+        _water?.Dispose();
+        _water = null;
+        _waterCache.Clear();
     }
 
     /// <summary>Reads the value of the $basetexture (or $baseTexture) key from a .vmt's

@@ -11,24 +11,38 @@ using RoadGen.Rendering;
 
 namespace RoadGen.UI;
 
-/// <summary>A software-rendered perspective 3D viewport with orbit, pan and zoom.</summary>
+/// <summary>A software-rendered perspective 3D viewport with Hammer-style freelook camera
+/// (fly with WASD/Q/E, right-drag to look, wheel to dolly) and click-to-select.</summary>
 public sealed class Viewport3D : Control
 {
     private RoadDocument _doc;
     private VmfWorld _referenceWorld;
     private double _yaw = -0.85;
     private double _pitch = 0.55;
-    private double _dist = 2800;
-    private Vec3 _target = Vec3.Zero;
+    private Vec3 _eye = new Vec3(2000, 2600, 1800);
     private bool _autoTarget = true;
 
-    private bool _orbiting;
-    private bool _panning;
-    private Point _lastMouse;
+    // Freelook fly speed (world units/second). The camera flies with WASD/Q/E and the wheel
+    // dollies along the view direction; nothing orbits a target anymore.
+    private double _flySpeed = 1500;
+
+    // Keyboard fly speed multiplier (WASD/Q/E). The wheel dolly and Shift+wheel speed tuning
+    // are intentionally NOT scaled by this, so they stay fine-grained.
+    private const double MovementSpeedScale = 2.0;
+
+    // Right-button "look": the cursor is captured/hidden at the view centre and turns the camera.
+    private bool _looking;
+
+    // Movement key state. While any fly key is held the camera advances once per rendered
+    // frame (ApplyFlyMovement) by the real elapsed time; the timer below only keeps repaints
+    // coming while a key is held but nothing else (mouse look, etc.) is invalidating.
+    private bool _keyForward, _keyBack, _keyLeft, _keyRight, _keyUp, _keyDown;
+    private readonly System.Windows.Forms.Timer _flyTimer = new System.Windows.Forms.Timer { Interval = 16 };
+    private long _lastMoveMs;
+
     private bool _clickCandidate;
     private Point _downPos;
 
-    private Vec3 _eye;
     private Vec3 _right;
     private Vec3 _up;
     private Vec3 _forward;
@@ -44,10 +58,12 @@ public sealed class Viewport3D : Control
             ControlStyles.AllPaintingInWmPaint |
             ControlStyles.UserPaint |
             ControlStyles.OptimizedDoubleBuffer |
-            ControlStyles.ResizeRedraw,
+            ControlStyles.ResizeRedraw |
+            ControlStyles.Selectable,
             true);
         BackColor = Color.FromArgb(32, 32, 36);
         TabStop = false;
+        _flyTimer.Tick += OnFlyTimerTick;
     }
 
     public void SetDocument(RoadDocument doc) => _doc = doc;
@@ -81,14 +97,12 @@ public sealed class Viewport3D : Control
         Invalidate();
     }
 
-    /// <summary>Cancel any in-progress orbit/pan/click. The 3D view has no point
-    /// drag, but this keeps the API consistent when points are deleted.</summary>
+    /// <summary>Cancels an in-progress look/click. The 3D view has no point drag, but this
+    /// keeps the API consistent when points are deleted.</summary>
     public void CancelDrag()
     {
-        _orbiting = false;
-        _panning = false;
+        StopLooking();
         _clickCandidate = false;
-        Cursor = Cursors.Default;
     }
 
     public void FrameAll()
@@ -104,38 +118,13 @@ public sealed class Viewport3D : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(BackColor);
 
-        if (_autoTarget && _doc != null)
+        if (_autoTarget)
         {
-            bool foundAny = false;
-            Vec3 min = Vec3.Zero;
-            Vec3 max = Vec3.Zero;
-            foreach (Track track in _doc.Tracks)
-            {
-                foreach (RoadPoint p in track.Points)
-                {
-                    if (!foundAny)
-                    {
-                        min = p.Position;
-                        max = p.Position;
-                        foundAny = true;
-                    }
-                    else
-                    {
-                        min = Vec3.Min(min, p.Position);
-                        max = Vec3.Max(max, p.Position);
-                    }
-                }
-            }
-
-            if (foundAny)
-            {
-                _target = (min + max) / 2.0;
-                double span = Math.Max(256, Math.Max(max.X - min.X, Math.Max(max.Y - min.Y, max.Z - min.Z)));
-                _dist = span * 3.2;
-            }
+            FrameContent();
         }
 
         SetupCamera();
+        ApplyFlyMovement();
         DrawGroundGrid(g);
         DrawAxes(g);
         DrawTexturedReference(g);
@@ -157,12 +146,10 @@ public sealed class Viewport3D : Control
 
     private void SetupCamera()
     {
-        Vec3 dir = new Vec3(
-            Math.Cos(_pitch) * Math.Sin(_yaw),
-            Math.Cos(_pitch) * Math.Cos(_yaw),
-            Math.Sin(_pitch));
-        _eye = _target + dir * _dist;
-        _forward = (_target - _eye).Normalized();
+        // Freelook basis: the camera looks along -dir (dir points from the world out to the
+        // eye, matching the old orbit framing so the default view is unchanged). The eye is a
+        // free position moved by WASD/Q/E and the wheel; nothing orbits a target.
+        _forward = -ViewDir(_yaw, _pitch);
         _right = Vec3.Cross(_forward, Vec3.UnitZ).Normalized();
         if (_right.LengthSq < 1e-6)
         {
@@ -171,6 +158,52 @@ public sealed class Viewport3D : Control
 
         _up = Vec3.Cross(_right, _forward).Normalized();
         _focal = Math.Max(Height, 1) * 1.4;
+    }
+
+    /// <summary>Direction from the world out toward the eye for the given orientation
+    /// (the eye sits on this side of whatever it is looking at).</summary>
+    private static Vec3 ViewDir(double yaw, double pitch) => new Vec3(
+        Math.Cos(pitch) * Math.Sin(yaw),
+        Math.Cos(pitch) * Math.Cos(yaw),
+        Math.Sin(pitch));
+
+    /// <summary>Places the free-fly eye so the current track content is framed (used on the
+    /// first paint and by Frame All). The look direction is untouched, so framing preserves
+    /// whatever orientation the user has set.</summary>
+    private void FrameContent()
+    {
+        bool foundAny = false;
+        Vec3 min = Vec3.Zero;
+        Vec3 max = Vec3.Zero;
+        if (_doc != null)
+        {
+            foreach (Track track in _doc.Tracks)
+            {
+                foreach (RoadPoint p in track.Points)
+                {
+                    if (!foundAny)
+                    {
+                        min = p.Position;
+                        max = p.Position;
+                        foundAny = true;
+                    }
+                    else
+                    {
+                        min = Vec3.Min(min, p.Position);
+                        max = Vec3.Max(max, p.Position);
+                    }
+                }
+            }
+        }
+
+        if (foundAny)
+        {
+            Vec3 centre = (min + max) / 2.0;
+            double span = Math.Max(256, Math.Max(max.X - min.X, Math.Max(max.Y - min.Y, max.Z - min.Z)));
+            double dist = span * 2.6;
+            _eye = centre + ViewDir(_yaw, _pitch) * dist;
+            _flySpeed = Math.Max(400, dist * 0.8);
+        }
     }
 
     private PointF? Project(Vec3 p)
@@ -567,7 +600,7 @@ public sealed class Viewport3D : Control
     {
         using Font f = new Font("Segoe UI", 9, FontStyle.Bold);
         using Brush b = new SolidBrush(Color.FromArgb(225, 230, 240));
-        g.DrawString("3D (right-drag orbit, click select)", f, b, 8, 7);
+        g.DrawString("3D (freelook: WASD/QE move, hold right-drag to look, wheel fly, click select)", f, b, 8, 7);
     }
 
     private void DrawBorder(Graphics g)
@@ -613,6 +646,17 @@ public sealed class Viewport3D : Control
             foreach (VmfFace face in brush.Faces)
             {
                 if (IsNoDraw(face.Material) || (HideToolTextures && IsToolTexture(face.Material)))
+                {
+                    continue;
+                }
+
+                // Hammer culls back faces in the textured view: only the side of a face that
+                // faces the camera is drawn, so stepping inside a closed solid shows nothing
+                // of it (no interior texturing). The Layout grid/wireframe still draws every
+                // face. Faces are single-sided here — this is a cull, not a second draw.
+                // A face faces the camera when its outward normal points back at it:
+                // dot(N, V0 - eye) < 0 (camera in front). Back faces give > 0 and are culled.
+                if (Vec3.Dot(face.Normal, face.Vertices[0] - _eye) > 0)
                 {
                     continue;
                 }
@@ -818,7 +862,6 @@ public sealed class Viewport3D : Control
     {
         base.OnMouseDown(e);
         Focus();
-        _lastMouse = e.Location;
 
         if (e.Button == MouseButtons.Left)
         {
@@ -829,13 +872,9 @@ public sealed class Viewport3D : Control
         }
         else if (e.Button == MouseButtons.Right)
         {
-            _orbiting = true;
-            Cursor = Cursors.SizeAll;
-        }
-        else if (e.Button == MouseButtons.Middle)
-        {
-            _panning = true;
-            Cursor = Cursors.SizeAll;
+            // Freelook: hold the right button to look around from the current position.
+            StartLooking();
+            _autoTarget = false;
         }
     }
 
@@ -843,25 +882,21 @@ public sealed class Viewport3D : Control
     {
         base.OnMouseMove(e);
 
-        int dx = e.X - _lastMouse.X;
-        int dy = e.Y - _lastMouse.Y;
-        _lastMouse = e.Location;
+        if (_looking)
+        {
+            // The cursor is held at the view centre; the offset from centre turns the camera.
+            Point centre = new Point(ClientRectangle.Width / 2, ClientRectangle.Height / 2);
+            int dx = e.X - centre.X;
+            int dy = e.Y - centre.Y;
+            if (dx != 0 || dy != 0)
+            {
+                _yaw += dx * 0.005;
+                _pitch += dy * 0.005;
+                _pitch = Math.Max(-1.55, Math.Min(1.55, _pitch));
+                Invalidate();
+            }
 
-        if (_orbiting)
-        {
-            _yaw += dx * 0.01;
-            _pitch += dy * 0.01;
-            _pitch = Math.Max(-1.55, Math.Min(1.55, _pitch));
-            _autoTarget = false;
-            Invalidate();
-        }
-        else if (_panning)
-        {
-            SetupCamera();
-            double scale = _dist * 0.0012;
-            _target = _target - _right * (dx * scale) + _up * (dy * scale);
-            _autoTarget = false;
-            Invalidate();
+            CenterLookCursor();
         }
         else if (_clickCandidate)
         {
@@ -877,15 +912,9 @@ public sealed class Viewport3D : Control
     {
         base.OnMouseUp(e);
 
-        if (_orbiting && e.Button == MouseButtons.Right)
+        if (_looking && e.Button == MouseButtons.Right)
         {
-            _orbiting = false;
-            Cursor = Cursors.Default;
-        }
-        else if (_panning && e.Button == MouseButtons.Middle)
-        {
-            _panning = false;
-            Cursor = Cursors.Default;
+            StopLooking();
         }
         else if (e.Button == MouseButtons.Left)
         {
@@ -896,10 +925,173 @@ public sealed class Viewport3D : Control
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
-        _dist *= e.Delta > 0 ? 0.85 : 1.0 / 0.85;
-        _dist = Math.Max(50, Math.Min(200000, _dist));
         _autoTarget = false;
+
+        int notches = e.Delta / 120;
+        if ((ModifierKeys & Keys.Shift) != 0)
+        {
+            // Shift+wheel tunes the fly speed instead of moving.
+            _flySpeed *= notches > 0 ? 1.25 : 1.0 / 1.25;
+            _flySpeed = Math.Max(100, Math.Min(200000, _flySpeed));
+        }
+        else
+        {
+            // Wheel dollies along the view direction (Hammer-style fly).
+            _eye = _eye + _forward * (_flySpeed * 0.20 * notches);
+        }
+
         Invalidate();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        SetKey(e.KeyCode, true);
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        base.OnKeyUp(e);
+        SetKey(e.KeyCode, false);
+    }
+
+    protected override void OnLostFocus(EventArgs e)
+    {
+        base.OnLostFocus(e);
+        StopKeys();
+        if (_looking)
+        {
+            StopLooking();
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _flyTimer.Stop();
+            _flyTimer.Dispose();
+            Cursor.Show(); // in case a look session left it hidden
+        }
+
+        base.Dispose(disposing);
+    }
+
+    private void SetKey(Keys key, bool down)
+    {
+        switch (key)
+        {
+            case Keys.W: _keyForward = down; break;
+            case Keys.S: _keyBack = down; break;
+            case Keys.A: _keyLeft = down; break;
+            case Keys.D: _keyRight = down; break;
+            case Keys.Q: _keyUp = down; break;
+            case Keys.E: _keyDown = down; break;
+            default: return;
+        }
+
+        if (down)
+        {
+            _autoTarget = false;
+            if (!_flyTimer.Enabled)
+            {
+                _lastMoveMs = Environment.TickCount64; // reset baseline so the first frame doesn't jump
+                _flyTimer.Start();
+            }
+        }
+        else if (!_keyForward && !_keyBack && !_keyLeft && !_keyRight && !_keyUp && !_keyDown)
+        {
+            _flyTimer.Stop();
+        }
+    }
+
+    private void StopKeys()
+    {
+        _keyForward = _keyBack = _keyLeft = _keyRight = _keyUp = _keyDown = false;
+        _flyTimer.Stop();
+    }
+
+    private void OnFlyTimerTick(object sender, EventArgs e)
+    {
+        // The timer no longer moves the camera — that happens once per rendered frame in
+        // ApplyFlyMovement. Its only job here is to keep repaints coming while a fly key is
+        // held but nothing else (mouse look, etc.) is invalidating the viewport.
+        if (!_keyForward && !_keyBack && !_keyLeft && !_keyRight && !_keyUp && !_keyDown)
+        {
+            _flyTimer.Stop();
+            return;
+        }
+
+        Invalidate();
+    }
+
+    /// <summary>Advances the camera while a fly key is held. Called from OnPaint every rendered
+    /// frame, so motion is driven by the frames that are actually being drawn rather than by the
+    /// 16 ms timer. During mouse look every mouse move floods the UI thread with repaints (each
+    /// a full software-textured frame), which starves the low-priority WM_TIMER messages — that
+    /// is what made WASD/Q/E appear dead while looking. Tying movement to OnPaint fixes it: as
+    /// long as the viewport is drawing frames (which it must be for the look rotation to be
+    /// visible), the camera advances by the real elapsed time between frames.</summary>
+    private void ApplyFlyMovement()
+    {
+        // Refresh the baseline on every frame so a later key press can't inherit a huge dt.
+        long nowMs = Environment.TickCount64;
+        double dt = (nowMs - _lastMoveMs) / 1000.0;
+        _lastMoveMs = nowMs;
+        if (dt <= 0.0)
+        {
+            dt = _flyTimer.Interval / 1000.0;
+        }
+        else if (dt > 0.25)
+        {
+            dt = 0.25; // clamp after a long stall so the camera doesn't teleport
+        }
+
+        if (!_keyForward && !_keyBack && !_keyLeft && !_keyRight && !_keyUp && !_keyDown)
+        {
+            return;
+        }
+
+        double speed = _flySpeed;
+        if ((ModifierKeys & Keys.Shift) != 0)
+        {
+            speed *= 3.5;
+        }
+
+        Vec3 move = Vec3.Zero;
+        if (_keyForward) move += _forward;
+        if (_keyBack) move -= _forward;
+        if (_keyRight) move += _right;
+        if (_keyLeft) move -= _right;
+        if (_keyUp) move += _up;
+        if (_keyDown) move -= _up;
+
+        if (move.LengthSq > 0)
+        {
+            Vec3 dir = move.Normalized();
+            _eye += dir * (speed * MovementSpeedScale * dt);
+        }
+    }
+
+    private void StartLooking()
+    {
+        _looking = true;
+        Capture = true;
+        Cursor.Hide();
+        CenterLookCursor();
+    }
+
+    private void StopLooking()
+    {
+        _looking = false;
+        Capture = false;
+        Cursor.Show();
+    }
+
+    private void CenterLookCursor()
+    {
+        Point centre = new Point(ClientRectangle.Width / 2, ClientRectangle.Height / 2);
+        Cursor.Position = PointToScreen(centre);
     }
 
     private bool TryPick(Point s, out int index)
