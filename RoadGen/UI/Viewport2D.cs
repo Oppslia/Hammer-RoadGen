@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -103,10 +104,77 @@ public sealed class Viewport2D : Control
     /// tool brushes from the view.</summary>
     public bool HideToolTextures = true;
 
+    /// <summary>Shared cordon (owned by MainWindow). While it is active, imported layout
+    /// brushes/displacements whose bounds don't intersect the box are not drawn and the box is
+    /// outlined in red. The road editing preview is never culled by the cordon.</summary>
+    private Cordon _cordon;
+
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public Cordon Cordon
+    {
+        get => _cordon;
+        set
+        {
+            if (ReferenceEquals(_cordon, value))
+            {
+                return;
+            }
+
+            if (_cordon != null)
+            {
+                _cordon.Changed -= OnCordonChanged;
+            }
+
+            _cordon = value;
+            if (_cordon != null)
+            {
+                _cordon.Changed += OnCordonChanged;
+            }
+
+            Invalidate();
+        }
+    }
+
+    /// <summary>When true the cordon tool is armed: left-drag in this view re-draws the
+    /// cordon box on the two axes of the current plane (the third axis keeps its existing
+    /// range), and the box is drawn even while culling is off.</summary>
+    public bool CordonEditing;
+
+    private void OnCordonChanged()
+    {
+        Invalidate();
+    }
+
+    // Cordon edit-drag state (tool armed). The out-of-plane axis keeps the box's range from
+    // the moment the drag began, so a Top-view drag selects an X/Y region at the full existing
+    // height rather than collapsing the box to a flat slab.
+    private bool _cordonDragging;
+    private Point _cordonDragStart;
+    private Vec3 _cordonStartMins;
+    private Vec3 _cordonStartMaxs;
+
+    // Which part of the box a cordon drag grabbed: 0..3 = a corner handle (resize) or
+    // CordonGripMove = inside the box (translate). Pressing empty space (CordonGripNone)
+    // does nothing — the box is NEVER redrawn from a click-drag; it always exists and is
+    // moved/resized instead. For a corner drag the two per-axis halves (min vs max) are
+    // tracked separately and flip when the pointer crosses the opposite side.
+    private int _cordonGrip = CordonGripMove;
+    private bool _cordonGripHMax;
+    private bool _cordonGripVMax;
+    private const int CordonGripMove = -1;   // drag inside the box translates it
+    private const int CordonGripNone = -2;   // press on empty space: no action
+
+    // Lazily computed AABB per imported brush/displacement, used only while the cordon is
+    // active so culling never has to re-walk vertices every frame. Cleared with the world.
+    private readonly Dictionary<VmfBrush, (Vec3 Min, Vec3 Max)> _brushBounds = new Dictionary<VmfBrush, (Vec3 Min, Vec3 Max)>();
+    private readonly Dictionary<VmfDisplacement, (Vec3 Min, Vec3 Max)> _dispBounds = new Dictionary<VmfDisplacement, (Vec3 Min, Vec3 Max)>();
+
     /// <summary>Sets the imported VMF layout to render as a reference behind the road.</summary>
     public void SetReferenceWorld(VmfWorld world)
     {
         _referenceWorld = world;
+        _brushBounds.Clear();
+        _dispBounds.Clear();
         Invalidate();
     }
 
@@ -131,6 +199,8 @@ public sealed class Viewport2D : Control
         _boxPending = false;
         _boxSelecting = false;
         _panning = false;
+        _cordonDragging = false;
+        Capture = false;
         Cursor = Cursors.Default;
     }
 
@@ -226,6 +296,7 @@ public sealed class Viewport2D : Control
         DrawPoints(g);
         DrawHint(g);
         DrawBox(g);
+        DrawCordon(g);
         DrawTitle(g);
         DrawBorder(g);
     }
@@ -840,6 +911,11 @@ public sealed class Viewport2D : Control
         using Pen brushPen = new Pen(Color.FromArgb(150, 162, 182), 1f);
         foreach (VmfBrush brush in _referenceWorld.Brushes)
         {
+            if (IsCordonCulled(brush))
+            {
+                continue;
+            }
+
             foreach (VmfFace face in brush.Faces)
             {
                 if (IsNoDraw(face.Material) || (HideToolTextures && IsToolTexture(face.Material)))
@@ -854,6 +930,11 @@ public sealed class Viewport2D : Control
         using Pen displacementPen = new Pen(Color.FromArgb(120, 220, 150), 1f);
         foreach (VmfDisplacement displacement in _referenceWorld.Displacements)
         {
+            if (IsCordonCulled(displacement))
+            {
+                continue;
+            }
+
             if (HideToolTextures && IsToolTexture(displacement.Material))
             {
                 continue;
@@ -901,6 +982,310 @@ public sealed class Viewport2D : Control
 
     private static bool IsToolTexture(string material) =>
         material != null && material.TrimStart('/').StartsWith("tools/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when a brush lies entirely outside the active cordon and should not be
+    /// drawn. When the cordon is off this is always false and costs nothing (bounds are only
+    /// computed on demand and cached per brush).</summary>
+    private bool IsCordonCulled(VmfBrush brush)
+    {
+        Cordon c = Cordon;
+        if (c == null || !c.Active)
+        {
+            return false;
+        }
+
+        if (!_brushBounds.TryGetValue(brush, out (Vec3 Min, Vec3 Max) b))
+        {
+            Vec3 min = Vec3.Zero, max = Vec3.Zero;
+            bool any = false;
+            foreach (VmfFace face in brush.Faces)
+            {
+                foreach (Vec3 v in face.Vertices)
+                {
+                    if (!any)
+                    {
+                        min = v;
+                        max = v;
+                        any = true;
+                    }
+                    else
+                    {
+                        min = Vec3.Min(min, v);
+                        max = Vec3.Max(max, v);
+                    }
+                }
+            }
+
+            b = (min, max);
+            _brushBounds[brush] = b;
+        }
+
+        return c.Culls(b.Min, b.Max);
+    }
+
+    /// <summary>Cordon cull test for a displacement, with the same on-demand cached AABB.</summary>
+    private bool IsCordonCulled(VmfDisplacement displacement)
+    {
+        Cordon c = Cordon;
+        if (c == null || !c.Active)
+        {
+            return false;
+        }
+
+        if (!_dispBounds.TryGetValue(displacement, out (Vec3 Min, Vec3 Max) b))
+        {
+            List<Vec3> points = new List<Vec3>();
+            int n = displacement.Grid.GetLength(0);
+            for (int r = 0; r < n; r++)
+            {
+                for (int col = 0; col < n; col++)
+                {
+                    points.Add(displacement.Grid[r, col]);
+                }
+            }
+
+            Cordon.ComputeBounds(points, out Vec3 min, out Vec3 max);
+            b = (min, max);
+            _dispBounds[displacement] = b;
+        }
+
+        return c.Culls(b.Min, b.Max);
+    }
+
+    /// <summary>Outlines the cordon box on this view's plane so the user can see what is
+    /// inside it. Red while cordoning is active (culling on); pale cyan while the cordon tool
+    /// is armed but not yet active. Because each 2D plane is axis-aligned, projecting the
+    /// box's two corner points is enough to draw its rectangle. While the tool is armed the
+    /// four corner handles are drawn too — grab one to resize, drag inside the box to move it.
+    /// </summary>
+    private void DrawCordon(Graphics g)
+    {
+        Cordon c = Cordon;
+        if (c == null || (!CordonEditing && !c.Enabled))
+        {
+            return;
+        }
+
+        PointF a = WorldToScreenF(c.Mins);
+        PointF b = WorldToScreenF(c.Maxs);
+        float x = Math.Min(a.X, b.X);
+        float y = Math.Min(a.Y, b.Y);
+        float w = Math.Abs(a.X - b.X);
+        float h = Math.Abs(a.Y - b.Y);
+
+        using Pen pen = new Pen(c.Enabled ? Color.FromArgb(255, 70, 60) : Color.FromArgb(80, 200, 230), c.Enabled ? 2f : 1.2f);
+        g.DrawRectangle(pen, x, y, w, h);
+
+        if (CordonEditing && c.HasBounds)
+        {
+            const int size = 7;
+            using SolidBrush fill = new SolidBrush(Color.FromArgb(240, 245, 250));
+            using Pen border = new Pen(Color.FromArgb(30, 30, 34), 1f);
+            g.FillRectangle(fill, x - size / 2f, y - size / 2f, size, size);
+            g.DrawRectangle(border, x - size / 2f, y - size / 2f, size, size);
+            g.FillRectangle(fill, x + w - size / 2f, y - size / 2f, size, size);
+            g.DrawRectangle(border, x + w - size / 2f, y - size / 2f, size, size);
+            g.FillRectangle(fill, x + w - size / 2f, y + h - size / 2f, size, size);
+            g.DrawRectangle(border, x + w - size / 2f, y + h - size / 2f, size, size);
+            g.FillRectangle(fill, x - size / 2f, y + h - size / 2f, size, size);
+            g.DrawRectangle(border, x - size / 2f, y + h - size / 2f, size, size);
+        }
+    }
+
+    /// <summary>Begins a cordon edit drag. Only two interactions are possible in the 2D
+    /// views: drag a corner handle to resize the box, or drag inside it to move it. Pressing
+    /// empty space does nothing — the cordon always exists (10k x 10k by default) and is
+    /// never redrawn from a click-drag. The out-of-plane axis range is captured so a drag
+    /// only affects the two in-plane axes.</summary>
+    private void BeginCordonEdit(Point location)
+    {
+        Cordon c = Cordon;
+        if (c == null)
+        {
+            return;
+        }
+
+        int grip = HitTestCordonGrip(location, c);
+        if (grip == CordonGripNone)
+        {
+            return; // empty space: no redraw, no action
+        }
+
+        _cordonDragging = true;
+        _cordonDragStart = location;
+        _cordonStartMins = c.Mins;
+        _cordonStartMaxs = c.Maxs;
+
+        Capture = true;
+        Cursor = Cursors.Cross;
+
+        _cordonGrip = grip;
+        if (_cordonGrip is >= 0 and <= 3)
+        {
+            // Corner numbers are WORLD combos (not screen positions):
+            // 0=(minH,minV) 1=(maxH,minV) 2=(maxH,maxV) 3=(minH,maxV)
+            _cordonGripHMax = _cordonGrip == 1 || _cordonGrip == 2;
+            _cordonGripVMax = _cordonGrip == 2 || _cordonGrip == 3;
+        }
+
+        // A plain press must NOT change the box (no snap, no reshape); only an actual drag
+        // (mouse move) applies the edit, so clicking a handle can never collapse the box.
+    }
+
+    /// <summary>Returns a corner-handle index 0..3 when the press hit one, CordonGripMove
+    /// when it hit inside the box (translate), or CordonGripNone for empty space. The corner
+    /// indices are WORLD min/max combos — the screen corners are mapped onto them accounting
+    /// for the view's Y flip (larger world V appears at the TOP of the screen).</summary>
+    private int HitTestCordonGrip(Point location, Cordon c)
+    {
+        const int tol = 6;
+        PointF a = WorldToScreenF(c.Mins);
+        PointF b = WorldToScreenF(c.Maxs);
+        float x0 = Math.Min(a.X, b.X);
+        float x1 = Math.Max(a.X, b.X);
+        float y0 = Math.Min(a.Y, b.Y);
+        float y1 = Math.Max(a.Y, b.Y);
+
+        // Screen layout (world -> screen): minH is left, maxH is right; maxV is TOP (y0),
+        // minV is BOTTOM (y1). So:
+        //   top-left    (x0,y0) = (minH, maxV) -> combo 3
+        //   top-right   (x1,y0) = (maxH, maxV) -> combo 2
+        //   bottom-right(x1,y1) = (maxH, minV) -> combo 1
+        //   bottom-left (x0,y1) = (minH, minV) -> combo 0
+        if (Math.Abs(location.X - x0) <= tol && Math.Abs(location.Y - y0) <= tol) return 3;
+        if (Math.Abs(location.X - x1) <= tol && Math.Abs(location.Y - y0) <= tol) return 2;
+        if (Math.Abs(location.X - x1) <= tol && Math.Abs(location.Y - y1) <= tol) return 1;
+        if (Math.Abs(location.X - x0) <= tol && Math.Abs(location.Y - y1) <= tol) return 0;
+
+        if (location.X >= x0 - tol && location.X <= x1 + tol
+            && location.Y >= y0 - tol && location.Y <= y1 + tol)
+        {
+            return CordonGripMove;
+        }
+
+        return CordonGripNone;
+    }
+
+    /// <summary>Applies the current drag to the cordon box (called on press and on every
+    /// mouse move). Everything is computed from the box captured at drag start so repeated
+    /// moves never accumulate error. Drags snap to the grid like point/selection movement:
+    /// a moved box shifts by whole grid steps and a dragged corner lands on a grid line.</summary>
+    private void ApplyCordonEdit(Point location)
+    {
+        Cordon c = Cordon;
+        if (c == null)
+        {
+            return;
+        }
+
+        Vec3 mins = _cordonStartMins;
+        Vec3 maxs = _cordonStartMaxs;
+
+        if (_cordonGrip == CordonGripMove)
+        {
+            // Translate the whole box on this plane; the out-of-plane axis keeps its range.
+            // Both the grab point and the pointer are snapped, so the box moves in whole grid
+            // steps (a plain press produces no jump because the delta is zero).
+            double hStart = SnapCoord(ScreenToWorldX(_cordonDragStart.X));
+            double hCur = SnapCoord(ScreenToWorldX(location.X));
+            double vStart = SnapCoord(ScreenToWorldY(_cordonDragStart.Y));
+            double vCur = SnapCoord(ScreenToWorldY(location.Y));
+            double dh = hCur - hStart;
+            double dv = vCur - vStart;
+            PlaneHVRange(mins, maxs, out double hMin, out double hMax, out double vMin, out double vMax);
+            SetPlaneBox(mins, maxs, hMin + dh, hMax + dh, vMin + dv, vMax + dv, out mins, out maxs);
+        }
+        else
+        {
+            // Resize a corner: the two in-plane axes follow the (grid-snapped) pointer,
+            // flipping sides smoothly as the pointer crosses the opposite edge.
+            double h = SnapCoord(ScreenToWorldX(location.X));
+            double v = SnapCoord(ScreenToWorldY(location.Y));
+            PlaneHVRange(mins, maxs, out double hMin, out double hMax, out double vMin, out double vMax);
+            ResizeHalf(ref _cordonGripHMax, ref hMin, ref hMax, hMin, hMax, h);
+            ResizeHalf(ref _cordonGripVMax, ref vMin, ref vMax, vMin, vMax, v);
+            SetPlaneBox(mins, maxs, hMin, hMax, vMin, vMax, out mins, out maxs);
+        }
+
+        c.Set(c.Enabled, mins, maxs);
+        Invalidate();
+    }
+
+    /// <summary>Snaps a single world coordinate to the road grid (honours the grid-snap
+    /// setting; with snapping off or no document it returns the value unchanged), matching
+    /// how point/selection movement snaps.</summary>
+    private double SnapCoord(double value)
+    {
+        RoadSettings settings = _doc != null ? _doc.Settings : null;
+        return settings != null ? settings.Snapped(value) : value;
+    }
+
+    /// <summary>Moves a box endpoint toward the pointer, flipping which side (min vs max) is
+    /// being dragged when the pointer crosses the opposite endpoint so a corner resize never
+    /// makes the box invert-and-jump.</summary>
+    private static void ResizeHalf(ref bool editingMax, ref double mn, ref double mx, double startMn, double startMx, double value)
+    {
+        if (editingMax)
+        {
+            if (value < startMn)
+            {
+                editingMax = false;
+                mn = value;
+            }
+            else
+            {
+                mx = value;
+            }
+        }
+        else if (value > startMx)
+        {
+            editingMax = true;
+            mx = value;
+        }
+        else
+        {
+            mn = value;
+        }
+    }
+
+    /// <summary>Extracts the box's horizontal (h) and vertical (v) extent on this plane's two
+    /// axes. The out-of-plane axis is left untouched by callers.</summary>
+    private void PlaneHVRange(Vec3 mins, Vec3 maxs, out double hMin, out double hMax, out double vMin, out double vMax)
+    {
+        switch (_plane)
+        {
+            case PlaneKind.Top:
+                hMin = mins.X; hMax = maxs.X; vMin = mins.Y; vMax = maxs.Y;
+                break;
+            case PlaneKind.Front:
+                hMin = mins.X; hMax = maxs.X; vMin = mins.Z; vMax = maxs.Z;
+                break;
+            default:
+                hMin = mins.Y; hMax = maxs.Y; vMin = mins.Z; vMax = maxs.Z;
+                break;
+        }
+    }
+
+    /// <summary>Rebuilds a box from (hMin, hMax, vMin, vMax) on this plane, preserving the
+    /// out-of-plane axis from <paramref name="baseMins"/> / <paramref name="baseMaxs"/>.</summary>
+    private void SetPlaneBox(Vec3 baseMins, Vec3 baseMaxs, double hMin, double hMax, double vMin, double vMax, out Vec3 mins, out Vec3 maxs)
+    {
+        switch (_plane)
+        {
+            case PlaneKind.Top:
+                mins = new Vec3(hMin, vMin, baseMins.Z);
+                maxs = new Vec3(hMax, vMax, baseMaxs.Z);
+                break;
+            case PlaneKind.Front:
+                mins = new Vec3(hMin, baseMins.Y, vMin);
+                maxs = new Vec3(hMax, baseMaxs.Y, vMax);
+                break;
+            default:
+                mins = new Vec3(baseMins.X, hMin, vMin);
+                maxs = new Vec3(baseMaxs.X, hMax, vMax);
+                break;
+        }
+    }
 
     // ----- world/screen mapping -----
 
@@ -1025,6 +1410,14 @@ public sealed class Viewport2D : Control
             return;
         }
 
+        // Cordon tool: a left press starts or reshapes the cordon box on this plane's
+        // two axes. It does not need a road document (the box can be drawn over the layout).
+        if (CordonEditing && Cordon != null)
+        {
+            BeginCordonEdit(e.Location);
+            return;
+        }
+
         if (_doc == null)
         {
             return;
@@ -1068,6 +1461,12 @@ public sealed class Viewport2D : Control
             double dy = (e.Y - _panStartScreen.Y) / _zoom;
             _center = new Vec3(_panStartCenter.X - dx, _panStartCenter.Y + dy, 0);
             Invalidate();
+            return;
+        }
+
+        if (_cordonDragging)
+        {
+            ApplyCordonEdit(e.Location);
             return;
         }
 
@@ -1139,6 +1538,15 @@ public sealed class Viewport2D : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+
+        if (e.Button == MouseButtons.Left && _cordonDragging)
+        {
+            _cordonDragging = false;
+            Capture = false;
+            Cursor = Cursors.Default;
+            Invalidate();
+            return;
+        }
 
         if (_panning && (e.Button == MouseButtons.Middle || e.Button == MouseButtons.Right))
         {
@@ -1253,7 +1661,7 @@ public sealed class Viewport2D : Control
         _hoverLocation = location;
 
         int target = -1;
-        if (!_panning && _dragIndex < 0 && !_dragging && !_boxSelecting && _doc != null
+        if (!_panning && !CordonEditing && _dragIndex < 0 && !_dragging && !_boxSelecting && _doc != null
             && _doc.Points != null && TryHitPoint(location, out int idx)
             && idx >= 0 && idx < _doc.Points.Count
             && IsWeldPoint(_doc.Points[idx].Position))

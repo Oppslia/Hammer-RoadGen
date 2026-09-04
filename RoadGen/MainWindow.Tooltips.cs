@@ -67,5 +67,10 @@ public sealed partial class MainWindow
         _tooltipManager.Attach(_numFeatureBottomZ, "Strip bottom height above the road surface");
         _tooltipManager.Attach(_numFeatureTopZ, "Strip top height above the road surface");
         _tooltipManager.Attach(_numFeatureBank, "Cross-slope (bank) of the strip in degrees");
+
+        // ---- Cordon ----
+        _tooltipManager.Attach(_chkCordonEdit, "Arm the cordon tool, then in a 2D view drag inside the box to move it (grid-snapped, starts as a 5k x 5k box at the origin) or drag a corner handle to resize it. Clicking empty space does not redraw the box; use Fit to map to size it to the layout");
+        _tooltipManager.Attach(_chkCordonActive, "Turn cordoning on: only the imported layout inside the red box is drawn, and only tracks inside it are exported to the VMF");
+        _tooltipManager.Attach(_btnCordonFit, "Re-seed the cordon box to the whole imported layout");
     }
 }

@@ -50,6 +50,20 @@ public sealed partial class MainWindow : Form
     private readonly ToolStripStatusLabel _statusMounted = new ToolStripStatusLabel();
     private bool _syncingGrid;
 
+    // ── Cordon ─────────────────────────────────────────────────────────────────────────
+    // One Hammer-style cordon box owned here and shared with the viewports (which draw it and
+    // cull the imported layout) and with the VMF export (which skips whole tracks outside it).
+    private readonly Cordon _cordon = new Cordon();
+    private readonly CheckBox _chkCordonEdit = new CheckBox();
+    private readonly CheckBox _chkCordonActive = new CheckBox();
+    private readonly Button _btnCordonFit = new Button();
+    private readonly Label _lblCordonBounds = new Label();
+
+    // Bounds of the imported layout, used to seed the cordon on import and by "Fit".
+    private bool _layoutBoundsKnown;
+    private Vec3 _layoutMins;
+    private Vec3 _layoutMaxs;
+
     private readonly Viewport3D _v3d = new Viewport3D();
     private readonly Viewport2D _top = new Viewport2D();
     private readonly Viewport2D _front = new Viewport2D();
@@ -618,7 +632,7 @@ public sealed partial class MainWindow : Form
         GroupBox edgeFeaturesSection = new GroupBox
         {
             Text = "Edge Features",
-            Dock = DockStyle.Top,
+            Dock = DockStyle.Fill,
             Height = 500,
             Padding = new Padding(6),
             ForeColor = Color.LightGray
@@ -750,6 +764,28 @@ public sealed partial class MainWindow : Form
         edgeFeaturesSection.Controls.Add(featureFaceToggleRow);
         edgeFeaturesSection.Controls.Add(featureInputs);
 
+        // Cordon section: a 135 px column docked to the LEFT of the Edge Features group. The
+        // edge-features group is docked Fill inside a shared host, so it gives up ~135 px of
+        // width and the cordon controls (edit / active / fit + bounds read-out) take that
+        // column.
+        GroupBox cordonSection = BuildCordonSection();
+        Panel cordonHost = new Panel
+        {
+            Dock = DockStyle.Left,
+            Width = 135,
+            Padding = new Padding(0, 0, 8, 0)
+        };
+        cordonHost.Controls.Add(cordonSection);
+
+        Panel edgeCordonHost = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 500,
+            Padding = new Padding(0)
+        };
+        edgeCordonHost.Controls.Add(edgeFeaturesSection);
+        edgeCordonHost.Controls.Add(cordonHost);
+
         Button generateCommand = new Button
         {
             Text = "Generate VMF...",
@@ -766,9 +802,9 @@ public sealed partial class MainWindow : Form
 
         // Docked controls stack in reverse z-order (last added docks first), so
         // the last top-docked control ends up at the very top. Desired layout from
-        // top to bottom: Control Points, Edge Features, Optimization.
+        // top to bottom: Control Points, Edge Features (+ cordon column), Optimization.
         sidePanelScroll.Controls.Add(optimizationSection);
-        sidePanelScroll.Controls.Add(edgeFeaturesSection);
+        sidePanelScroll.Controls.Add(edgeCordonHost);
         sidePanelScroll.Controls.Add(trackSection);
 
         sidePanel.Controls.Add(sidePanelScroll);
@@ -779,6 +815,158 @@ public sealed partial class MainWindow : Form
         StyleSectionInputTextColors();
 
         return sidePanel;
+    }
+
+    /// <summary>Builds the cordon control column that sits in the 135 px strip to the LEFT of
+    /// the Edge Features group. Top to bottom: "Edit cordon" (arms the tool so a left-drag in
+    /// the 2D views redraws the box), "Active" (turns cordoning on — the box goes red and the
+    /// imported layout outside it is hidden / excluded from export), "Fit to map" (re-seeds
+    /// the box to the whole imported layout), and a compact bounds read-out.</summary>
+    private GroupBox BuildCordonSection()
+    {
+        GroupBox box = new GroupBox
+        {
+            Text = "Cordon",
+            Dock = DockStyle.Top,
+            Height = 178,
+            Padding = new Padding(6, 2, 6, 6),
+            ForeColor = Color.LightGray
+        };
+
+        _chkCordonEdit.Text = "Edit cordon";
+        _chkCordonEdit.Dock = DockStyle.Top;
+        _chkCordonEdit.Height = 24;
+        _chkCordonEdit.AutoSize = false;
+        _chkCordonEdit.ForeColor = Color.LightGray;
+        _chkCordonEdit.TextAlign = ContentAlignment.MiddleLeft;
+
+        _chkCordonActive.Text = "Active";
+        _chkCordonActive.Dock = DockStyle.Top;
+        _chkCordonActive.Height = 24;
+        _chkCordonActive.AutoSize = false;
+        _chkCordonActive.ForeColor = Color.LightGray;
+        _chkCordonActive.TextAlign = ContentAlignment.MiddleLeft;
+
+        _btnCordonFit.Text = "Fit to map";
+        _btnCordonFit.Dock = DockStyle.Top;
+        _btnCordonFit.Height = 24;
+        _btnCordonFit.AutoSize = false;
+        StyleLayerButton(_btnCordonFit);
+
+        _lblCordonBounds.Dock = DockStyle.Top;
+        _lblCordonBounds.Height = 78;
+        _lblCordonBounds.Font = new Font("Consolas", 7.5f);
+        _lblCordonBounds.ForeColor = Color.FromArgb(170, 180, 195);
+        _lblCordonBounds.Text = "";
+
+        // Dock.Top children stack in reverse z-order (last added docks at the very top), so
+        // controls are added bottom-first: bounds read-out, Fit, Active, Edit cordon.
+        box.Controls.Add(_lblCordonBounds);
+        box.Controls.Add(_btnCordonFit);
+        box.Controls.Add(_chkCordonActive);
+        box.Controls.Add(_chkCordonEdit);
+
+        return box;
+    }
+
+    private void ApplyCordonEditMode()
+    {
+        bool on = _chkCordonEdit.Checked;
+        _v3d.CordonEditing = on;
+        _top.CordonEditing = on;
+        _front.CordonEditing = on;
+        _side.CordonEditing = on;
+        InvalidateAll();
+    }
+
+    private void ApplyCordonActiveFromControl()
+    {
+        // The box always exists (a 10k x 10k default), so enabling just turns culling on —
+        // it never needs to create or reshape the box. If it is somehow degenerate, "Fit to
+        // map" is the explicit way to give it a real size.
+        _cordon.Set(_chkCordonActive.Checked, _cordon.Mins, _cordon.Maxs);
+    }
+
+    /// <summary>Red text on the Active toggle whenever cordoning is on, so the state reads at
+    /// a glance (the box drawn in the views is red in the same state).</summary>
+    private void ApplyCordonActiveAppearance()
+    {
+        bool red = _cordon.Enabled;
+        _chkCordonActive.ForeColor = red ? Color.FromArgb(255, 90, 80) : Color.LightGray;
+        _chkCordonActive.Font = new Font(_chkCordonActive.Font, red ? FontStyle.Bold : FontStyle.Regular);
+    }
+
+    /// <summary>Re-seeds the cordon box to the imported layout's full bounds (or, with no
+    /// layout, to the road content).</summary>
+    private void FitCordonToMap()
+    {
+        if (!_layoutBoundsKnown && !TryGetTrackBounds(out _layoutMins, out _layoutMaxs))
+        {
+            return;
+        }
+
+        _cordon.Set(_cordon.Enabled, _layoutMins, _layoutMaxs);
+    }
+
+    private void UpdateCordonReadout()
+    {
+        string text = _cordon.HasBounds
+            ? "X " + FormatRange(_cordon.Mins.X, _cordon.Maxs.X) + "\n"
+              + "Y " + FormatRange(_cordon.Mins.Y, _cordon.Maxs.Y) + "\n"
+              + "Z " + FormatRange(_cordon.Mins.Z, _cordon.Maxs.Z)
+            : "box not set";
+
+        if (_lblCordonBounds.Text != text)
+        {
+            _lblCordonBounds.Text = text;
+        }
+    }
+
+    private static string FormatRange(double a, double b) =>
+        a.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+        + " .. " + b.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>Pushes a freshly imported (or reloaded) layout to all four viewports and
+    /// remembers its bounds for the cordon's "Fit to map" button. Importing a layout does NOT
+    /// move or resize the cordon — the cordon is a persistent 10k x 10k box the user positions
+    /// in the 2D views (or explicitly fits).</summary>
+    private void SetLayoutWorld(VmfWorld world)
+    {
+        _v3d.SetReferenceWorld(world);
+        _top.SetReferenceWorld(world);
+        _front.SetReferenceWorld(world);
+        _side.SetReferenceWorld(world);
+
+        Cordon.ComputeWorldBounds(world, out _layoutMins, out _layoutMaxs);
+        _layoutBoundsKnown = true;
+
+        InvalidateAll();
+    }
+
+    private bool TryGetTrackBounds(out Vec3 mins, out Vec3 maxs)
+    {
+        mins = Vec3.Zero;
+        maxs = Vec3.Zero;
+        bool any = false;
+        foreach (Track track in _doc.Tracks)
+        {
+            foreach (RoadPoint p in track.Points)
+            {
+                if (!any)
+                {
+                    mins = p.Position;
+                    maxs = p.Position;
+                    any = true;
+                }
+                else
+                {
+                    mins = Vec3.Min(mins, p.Position);
+                    maxs = Vec3.Max(maxs, p.Position);
+                }
+            }
+        }
+
+        return any;
     }
 
     /// <summary>The section group-box titles are drawn with the group's ForeColor,
@@ -1007,6 +1195,25 @@ public sealed partial class MainWindow : Form
         _top.SetDocument(_doc);
         _front.SetDocument(_doc);
         _side.SetDocument(_doc);
+
+        // Cordon wiring: the single shared box is pushed to every viewport (they draw it and
+        // cull the imported layout against it), and the column controls drive its state. Any
+        // change repaints the views and refreshes the read-out / Active button colour.
+        _v3d.Cordon = _cordon;
+        _top.Cordon = _cordon;
+        _front.Cordon = _cordon;
+        _side.Cordon = _cordon;
+
+        _chkCordonEdit.CheckedChanged += (s, e) => ApplyCordonEditMode();
+        _chkCordonActive.CheckedChanged += (s, e) => ApplyCordonActiveFromControl();
+        _btnCordonFit.Click += (s, e) => FitCordonToMap();
+        _cordon.Changed += () =>
+        {
+            UpdateCordonReadout();
+            ApplyCordonActiveAppearance();
+        };
+        UpdateCordonReadout();
+        ApplyCordonActiveAppearance();
 
         _v3d.PointSelected = OnViewPointSelected;
         _top.PointSelected = OnViewPointSelected;
@@ -1398,12 +1605,7 @@ public sealed partial class MainWindow : Form
             string text = System.IO.File.ReadAllText(dlg.FileName);
             VmfWorld world = VmfWorldImporter.ImportWorld(text);
 
-            _v3d.SetReferenceWorld(world);
-            _top.SetReferenceWorld(world);
-            _front.SetReferenceWorld(world);
-            _side.SetReferenceWorld(world);
-            InvalidateAll();
-
+            SetLayoutWorld(world);
             StartLayoutWatch(dlg.FileName);
             MountLayoutMaterials(dlg.FileName);
         }
@@ -1512,11 +1714,7 @@ public sealed partial class MainWindow : Form
                 string text = System.IO.File.ReadAllText(_layoutVmfPath);
                 VmfWorld world = VmfWorldImporter.ImportWorld(text);
 
-                _v3d.SetReferenceWorld(world);
-                _top.SetReferenceWorld(world);
-                _front.SetReferenceWorld(world);
-                _side.SetReferenceWorld(world);
-                InvalidateAll();
+                SetLayoutWorld(world);
                 return;
             }
             catch (Exception)
@@ -3290,7 +3488,7 @@ public sealed partial class MainWindow : Form
 
         try
         {
-            string vmf = RoadGenerator.GenerateVmf(_doc);
+            string vmf = RoadGenerator.GenerateVmf(_doc, _cordon);
             System.IO.File.WriteAllText(dlg.FileName, vmf);
             MessageBox.Show(this, $"Wrote {dlg.FileName}", "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }

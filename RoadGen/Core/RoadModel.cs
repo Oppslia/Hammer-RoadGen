@@ -401,13 +401,25 @@ public sealed class RoadDocument
     /// <summary>Assemble the document's tracks into chains: tracks whose endpoints
     /// share a position are joined into one continuous road. Each chain uses the
     /// settings of its first (topmost) track.</summary>
-    public List<RoadChain> BuildChains()
+    public List<RoadChain> BuildChains() => BuildChains(null);
+
+    /// <summary>Builds chains from only the tracks for which <paramref name="include"/>
+    /// returns true (null/omitted includes every track). Tracks that fail the filter are
+    /// treated as absent, so a cordon can export just the roads inside its box without a
+    /// welded neighbour dragging geometry back in. This is a pure filter — chain building,
+    /// joining and settings selection are otherwise untouched.</summary>
+    public List<RoadChain> BuildChains(Func<Track, bool> include)
     {
         List<RoadChain> chains = new List<RoadChain>();
 
         foreach (Track track in Tracks)
         {
             if (track.Points.Count == 0)
+            {
+                continue;
+            }
+
+            if (include != null && !include(track))
             {
                 continue;
             }

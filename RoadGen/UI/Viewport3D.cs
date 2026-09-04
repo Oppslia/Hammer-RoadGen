@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -86,14 +87,62 @@ public sealed class Viewport3D : Control
     /// with their real game materials, mirroring Hammer's mounted search paths.</summary>
     public readonly VtfMaterialCache MaterialCache = new VtfMaterialCache();
 
+    /// <summary>Shared cordon (owned by MainWindow). When it is active the imported layout's
+    /// brushes/displacements whose bounds don't intersect the box are not drawn, and the box
+    /// itself is outlined in red. The road editing preview is never culled by the cordon.</summary>
+    private Cordon _cordon;
+
+    /// <summary>When true the cordon tool is armed: the box is drawn (even if culling is
+    /// off) so the user can see what a drag would clip to. The 3D view does not host the
+    /// cordon drag — that happens in the 2D views — but it still shows the box.</summary>
+    public bool CordonEditing;
+
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public Cordon Cordon
+    {
+        get => _cordon;
+        set
+        {
+            if (ReferenceEquals(_cordon, value))
+            {
+                return;
+            }
+
+            if (_cordon != null)
+            {
+                _cordon.Changed -= OnCordonChanged;
+            }
+
+            _cordon = value;
+            if (_cordon != null)
+            {
+                _cordon.Changed += OnCordonChanged;
+            }
+
+            Invalidate();
+        }
+    }
+
+    private void OnCordonChanged()
+    {
+        Invalidate();
+    }
+
     private readonly FrameBuffer _frameBuffer = new FrameBuffer();
     private readonly Dictionary<Bitmap, int[]> _texturePixels = new Dictionary<Bitmap, int[]>();
+
+    // Lazily computed AABB per imported brush/displacement, used only while the cordon is
+    // active so culling never has to re-walk vertices every frame. Cleared with the world.
+    private readonly Dictionary<VmfBrush, (Vec3 Min, Vec3 Max)> _brushBounds = new Dictionary<VmfBrush, (Vec3 Min, Vec3 Max)>();
+    private readonly Dictionary<VmfDisplacement, (Vec3 Min, Vec3 Max)> _dispBounds = new Dictionary<VmfDisplacement, (Vec3 Min, Vec3 Max)>();
 
     /// <summary>Sets the imported VMF layout to render as a reference behind the road.</summary>
     public void SetReferenceWorld(VmfWorld world)
     {
         _referenceWorld = world;
         _texturePixels.Clear();
+        _brushBounds.Clear();
+        _dispBounds.Clear();
         Invalidate();
     }
 
@@ -140,6 +189,7 @@ public sealed class Viewport3D : Control
             DrawPoints(g);
         }
 
+        DrawCordon(g);
         DrawTitle(g);
         DrawBorder(g);
     }
@@ -643,6 +693,11 @@ public sealed class Viewport3D : Control
         // Hammer axes, so missing textures stay glued to the world and zoom consistently.
         foreach (VmfBrush brush in _referenceWorld.Brushes)
         {
+            if (IsCordonCulled(brush))
+            {
+                continue;
+            }
+
             foreach (VmfFace face in brush.Faces)
             {
                 if (IsNoDraw(face.Material) || (HideToolTextures && IsToolTexture(face.Material)))
@@ -686,6 +741,11 @@ public sealed class Viewport3D : Control
         // Displacements: each quad becomes two triangles, UV from the side's Hammer axes.
         foreach (VmfDisplacement displacement in _referenceWorld.Displacements)
         {
+            if (IsCordonCulled(displacement))
+            {
+                continue;
+            }
+
             if (HideToolTextures && IsToolTexture(displacement.Material))
             {
                 continue;
@@ -796,6 +856,11 @@ public sealed class Viewport3D : Control
         using Pen brushPen = new Pen(Color.FromArgb(150, 162, 182), 1f);
         foreach (VmfBrush brush in _referenceWorld.Brushes)
         {
+            if (IsCordonCulled(brush))
+            {
+                continue;
+            }
+
             foreach (VmfFace face in brush.Faces)
             {
                 if (IsNoDraw(face.Material) || (HideToolTextures && IsToolTexture(face.Material)))
@@ -810,6 +875,11 @@ public sealed class Viewport3D : Control
         using Pen displacementPen = new Pen(Color.FromArgb(120, 220, 150), 1f);
         foreach (VmfDisplacement displacement in _referenceWorld.Displacements)
         {
+            if (IsCordonCulled(displacement))
+            {
+                continue;
+            }
+
             if (HideToolTextures && IsToolTexture(displacement.Material))
             {
                 continue;
@@ -857,6 +927,111 @@ public sealed class Viewport3D : Control
 
     private static bool IsToolTexture(string material) =>
         material != null && material.TrimStart('/').StartsWith("tools/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when a brush lies entirely outside the active cordon and should not be
+    /// drawn. When the cordon is off this is always false and costs nothing (bounds are only
+    /// computed on demand and cached per brush).</summary>
+    private bool IsCordonCulled(VmfBrush brush)
+    {
+        Cordon c = _cordon;
+        if (c == null || !c.Active)
+        {
+            return false;
+        }
+
+        if (!_brushBounds.TryGetValue(brush, out (Vec3 Min, Vec3 Max) b))
+        {
+            Vec3 min = Vec3.Zero, max = Vec3.Zero;
+            bool any = false;
+            foreach (VmfFace face in brush.Faces)
+            {
+                foreach (Vec3 v in face.Vertices)
+                {
+                    if (!any)
+                    {
+                        min = v;
+                        max = v;
+                        any = true;
+                    }
+                    else
+                    {
+                        min = Vec3.Min(min, v);
+                        max = Vec3.Max(max, v);
+                    }
+                }
+            }
+
+            b = (min, max);
+            _brushBounds[brush] = b;
+        }
+
+        return c.Culls(b.Min, b.Max);
+    }
+
+    /// <summary>Cordon cull test for a displacement, with the same on-demand cached AABB.</summary>
+    private bool IsCordonCulled(VmfDisplacement displacement)
+    {
+        Cordon c = _cordon;
+        if (c == null || !c.Active)
+        {
+            return false;
+        }
+
+        if (!_dispBounds.TryGetValue(displacement, out (Vec3 Min, Vec3 Max) b))
+        {
+            List<Vec3> points = new List<Vec3>();
+            int n = displacement.Grid.GetLength(0);
+            for (int r = 0; r < n; r++)
+            {
+                for (int col = 0; col < n; col++)
+                {
+                    points.Add(displacement.Grid[r, col]);
+                }
+            }
+
+            Cordon.ComputeBounds(points, out Vec3 min, out Vec3 max);
+            b = (min, max);
+            _dispBounds[displacement] = b;
+        }
+
+        return c.Culls(b.Min, b.Max);
+    }
+
+    /// <summary>Outlines the cordon box so the user can see what is inside it. Red while
+    /// cordoning is active (culling on); pale cyan while the cordon tool is armed but not
+    /// yet active. Drawn on top of everything — it is a guide, not geometry.</summary>
+    private void DrawCordon(Graphics g)
+    {
+        Cordon c = _cordon;
+        if (c == null || (!CordonEditing && !c.Enabled))
+        {
+            return;
+        }
+
+        using Pen pen = new Pen(c.Enabled ? Color.FromArgb(255, 70, 60) : Color.FromArgb(80, 200, 230), c.Enabled ? 2f : 1.3f);
+
+        Vec3 mn = c.Mins;
+        Vec3 mx = c.Maxs;
+        Vec3[] corners =
+        {
+            new Vec3(mn.X, mn.Y, mn.Z), new Vec3(mx.X, mn.Y, mn.Z),
+            new Vec3(mx.X, mx.Y, mn.Z), new Vec3(mn.X, mx.Y, mn.Z),
+            new Vec3(mn.X, mn.Y, mx.Z), new Vec3(mx.X, mn.Y, mx.Z),
+            new Vec3(mx.X, mx.Y, mx.Z), new Vec3(mn.X, mx.Y, mx.Z)
+        };
+
+        int[] edges =
+        {
+            0, 1, 1, 2, 2, 3, 3, 0,  // bottom face
+            4, 5, 5, 6, 6, 7, 7, 4,  // top face
+            0, 4, 1, 5, 2, 6, 3, 7   // verticals
+        };
+
+        for (int i = 0; i < edges.Length; i += 2)
+        {
+            Draw3DLine(g, corners[edges[i]], corners[edges[i + 1]], pen);
+        }
+    }
 
     protected override void OnMouseDown(MouseEventArgs e)
     {

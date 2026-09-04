@@ -7,7 +7,7 @@ namespace RoadGen.Core;
 /// <summary>Turns a road document into a complete VMF file.</summary>
 public static class RoadGenerator
 {
-    public static string GenerateVmf(RoadDocument document)
+    public static string GenerateVmf(RoadDocument document, Cordon cordon = null)
     {
         StringBuilder output = new StringBuilder();
         output.Append(Vmf.Header);
@@ -15,7 +15,18 @@ public static class RoadGenerator
         int solidId = 2;
         bool generatedAnyTrack = false;
 
-        List<RoadChain> chains = document.BuildChains();
+        // Cordon export filter (mirrors Hammer): when cordoning is active, a track is only
+        // exported if its road bounds intersect the cordon box. Tracks outside are dropped
+        // whole (including their edge features), since a chain is built only from the tracks
+        // that pass the filter. Everything else about generation is untouched.
+        bool cordonActive = cordon != null && cordon.Active;
+        Func<Track, bool> include = null;
+        if (cordonActive)
+        {
+            include = track => TrackIntersectsCordon(track, cordon);
+        }
+
+        List<RoadChain> chains = document.BuildChains(include);
 
         foreach (RoadChain chain in chains)
         {
@@ -37,11 +48,56 @@ public static class RoadGenerator
 
         if (!generatedAnyTrack)
         {
-            throw new InvalidOperationException("Add at least two control points to a track.");
+            // When a cordon is active this means every track sat outside the box — almost
+            // certainly a misplaced box, so surface it instead of silently writing an empty
+            // file. Otherwise it is the plain "nothing to generate yet" case.
+            throw new InvalidOperationException(
+                cordonActive
+                    ? "No tracks are inside the active cordon bounds."
+                    : "Add at least two control points to a track.");
         }
 
         output.Append(Vmf.Footer);
         return output.ToString();
+    }
+
+    /// <summary>Whether a track's road geometry reaches the cordon. The track's bounding box
+    /// (over its control points) is padded by the widest half-width and thickness so geometry
+    /// that only brushes the box edge still counts as intersecting, mirroring Hammer's
+    /// object-intersects-cordon test at the granularity of a whole track.</summary>
+    private static bool TrackIntersectsCordon(Track track, Cordon cordon)
+    {
+        bool any = false;
+        Vec3 mins = Vec3.Zero;
+        Vec3 maxs = Vec3.Zero;
+        double maxHalfWidth = 0;
+        double maxThickness = 0;
+        foreach (RoadPoint p in track.Points)
+        {
+            if (!any)
+            {
+                mins = p.Position;
+                maxs = p.Position;
+                any = true;
+            }
+            else
+            {
+                mins = Vec3.Min(mins, p.Position);
+                maxs = Vec3.Max(maxs, p.Position);
+            }
+
+            maxHalfWidth = Math.Max(maxHalfWidth, p.Width * 0.5);
+            maxThickness = Math.Max(maxThickness, p.Thickness);
+        }
+
+        if (!any)
+        {
+            return false;
+        }
+
+        // Roads extend sideways by half their width and down by their thickness.
+        Vec3 pad = new Vec3(maxHalfWidth, maxHalfWidth, maxThickness);
+        return Cordon.Intersects(cordon.Mins, cordon.Maxs, mins - pad, maxs + pad);
     }
 
     private static void AppendEdgeFeatures(StringBuilder output, RoadChain chain, ref int solidId)
