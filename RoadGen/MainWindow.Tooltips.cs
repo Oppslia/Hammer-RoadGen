@@ -30,6 +30,9 @@ public sealed partial class MainWindow
         _tooltipManager.Attach(_btnGenerate, "Export the road to a VMF (Ctrl+G)");
         _tooltipManager.Attach(_gridCombo, "Grid interval (HU)");
         _tooltipManager.Attach(_btnSnap, "Toggle snapping points to the grid");
+        _tooltipManager.Attach(_btnTextures, "Show the imported layout textured with its game materials");
+        _tooltipManager.Attach(_btnLayoutGrid, "Show the imported layout's wireframe grid (turn off to view just the textures)");
+        _tooltipManager.Attach(_btnHideTools, "Hide imported tool-texture brushes (tools/* like clip/skip/areaportal) — on by default; uncheck to show them");
 
         // ---- Road settings ----
         _tooltipManager.Attach(_cboPower, "Displacement power (higher = denser grid)");

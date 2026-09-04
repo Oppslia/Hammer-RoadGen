@@ -13,4 +13,17 @@
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Single third-party dependency: VTFLib.NET (git submodule at src/Dependencies/VTFLib.NET),
+         providing the native VTFLib library for VTF/VMT decoding. -->
+    <ProjectReference Include="..\src\Dependencies\VTFLib.NET\VTFLib.NET\VTFLib.NET.csproj" />
+
+    <!-- The VTFLib.NET project already copies VTFLib.dll to its own output; this guarantees it
+         also lands next to RoadGen.exe. Guarded so the build still works before the submodule
+         has been added. -->
+    <None Include="..\src\Dependencies\VTFLib.NET\VTFLib.NET\VTFLib.dll"
+          Condition="Exists('..\src\Dependencies\VTFLib.NET\VTFLib.NET\VTFLib.dll')"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

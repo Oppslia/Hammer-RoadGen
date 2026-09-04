@@ -15,6 +15,14 @@ public static class VmfWorldImporter
         public Vec3 Normal;
         public double D;
         public string Material = "";
+
+        // Hammer texture axes for this side: u = (dot(UAxis, P) + UShift) * UScale.
+        public Vec3 UAxis = Vec3.UnitX;
+        public Vec3 VAxis = Vec3.UnitY;
+        public double UShift;
+        public double VShift;
+        public double UScale = 1.0;
+        public double VScale = 1.0;
     }
 
     private const double Epsilon = 0.5;
@@ -106,11 +114,19 @@ public static class VmfWorldImporter
             }
 
             normal = normal.Normalized();
+            ParseTextureAxis(side.Properties, "uaxis", Vec3.UnitX, out Vec3 uAxis, out double uShift, out double uScale);
+            ParseTextureAxis(side.Properties, "vaxis", Vec3.UnitY, out Vec3 vAxis, out double vShift, out double vScale);
             planes.Add(new SidePlane
             {
                 Normal = normal,
                 D = Vec3.Dot(normal, a),
-                Material = side.Properties.TryGetValue("material", out string mat) ? mat : ""
+                Material = side.Properties.TryGetValue("material", out string mat) ? mat : "",
+                UAxis = uAxis,
+                VAxis = vAxis,
+                UShift = uShift,
+                VShift = vShift,
+                UScale = uScale,
+                VScale = vScale
             });
 
             centroid += a + b + c;
@@ -177,7 +193,13 @@ public static class VmfWorldImporter
             VmfFace face = new VmfFace
             {
                 Material = plane.Material,
-                Normal = plane.Normal
+                Normal = plane.Normal,
+                UAxis = plane.UAxis,
+                VAxis = plane.VAxis,
+                UShift = plane.UShift,
+                VShift = plane.VShift,
+                UScale = plane.UScale,
+                VScale = plane.VScale
             };
             face.Vertices.AddRange(faceVertices);
             brush.Faces.Add(face);
@@ -346,15 +368,55 @@ public static class VmfWorldImporter
             }
         }
 
+        ParseTextureAxis(side.Properties, "uaxis", Vec3.UnitX, out Vec3 uAxis, out double uShift, out double uScale);
+        ParseTextureAxis(side.Properties, "vaxis", Vec3.UnitY, out Vec3 vAxis, out double vShift, out double vScale);
+
         return new VmfDisplacement
         {
             Grid = grid,
             Power = power,
-            Material = side.Properties.TryGetValue("material", out string mat) ? mat : ""
+            Material = side.Properties.TryGetValue("material", out string mat) ? mat : "",
+            UAxis = uAxis,
+            VAxis = vAxis,
+            UShift = uShift,
+            VShift = vShift,
+            UScale = uScale,
+            VScale = vScale
         };
     }
 
     // ---------------------------------------------------------------- parsing
+
+    /// <summary>Parses a Hammer texture axis string: "[x y z shift] scale". Missing or
+    /// malformed values fall back to a sensible unit projection along the given axis.</summary>
+    private static void ParseTextureAxis(Dictionary<string, string> properties, string key, Vec3 fallbackAxis,
+        out Vec3 axis, out double shift, out double scale)
+    {
+        axis = fallbackAxis;
+        shift = 0;
+        scale = 1.0;
+
+        if (!properties.TryGetValue(key, out string s))
+        {
+            return;
+        }
+
+        List<double> nums = ParseNumbers(s);
+        if (nums.Count >= 3)
+        {
+            axis = new Vec3(nums[0], nums[1], nums[2]);
+        }
+
+        if (nums.Count >= 4)
+        {
+            shift = nums[3];
+        }
+
+        if (nums.Count >= 5)
+        {
+            scale = nums[4];
+        }
+    }
 
     private static Vec3[] ParsePlane(string s)
     {

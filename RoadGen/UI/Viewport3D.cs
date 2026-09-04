@@ -2,8 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using RoadGen.Core;
+using RoadGen.Core.Vtf;
+using RoadGen.Rendering;
 
 namespace RoadGen.UI;
 
@@ -52,10 +56,28 @@ public sealed class Viewport3D : Control
     public bool ShowFeatureSegments;
     public bool ShowReferenceWorld = true;
 
+    /// <summary>When true, the imported reference world is rendered with its actual game
+    /// materials (textured) instead of only as a wireframe. The wireframe still draws on top.</summary>
+    public bool ShowTexturedReference;
+
+    /// <summary>When true (default), faces of the imported layout whose material is a Source
+    /// tool texture (tools/*, e.g. clip/skip/areaportal) are not drawn at all — only real
+    /// geometry shows, like Hammer hiding tool brushes from the view.</summary>
+    public bool HideToolTextures = true;
+
+    /// <summary>Decoded texture cache. MainWindow points it at the auto-discovered Source
+    /// content folders (SetContentRoots, each mounted loose + *_dir.vpk) so faces render
+    /// with their real game materials, mirroring Hammer's mounted search paths.</summary>
+    public readonly VtfMaterialCache MaterialCache = new VtfMaterialCache();
+
+    private readonly FrameBuffer _frameBuffer = new FrameBuffer();
+    private readonly Dictionary<Bitmap, int[]> _texturePixels = new Dictionary<Bitmap, int[]>();
+
     /// <summary>Sets the imported VMF layout to render as a reference behind the road.</summary>
     public void SetReferenceWorld(VmfWorld world)
     {
         _referenceWorld = world;
+        _texturePixels.Clear();
         Invalidate();
     }
 
@@ -116,6 +138,7 @@ public sealed class Viewport3D : Control
         SetupCamera();
         DrawGroundGrid(g);
         DrawAxes(g);
+        DrawTexturedReference(g);
         DrawReferenceWorld(g);
 
         if (_doc != null)
@@ -565,6 +588,160 @@ public sealed class Viewport3D : Control
         g.DrawLine(pen, pa.Value, pb.Value);
     }
 
+    private void DrawTexturedReference(Graphics g)
+    {
+        // No search-path requirement here: when no games were discovered every face falls back
+        // to the world-aligned checkerboard, so toggling textures always produces visible output.
+        if (!ShowTexturedReference || _referenceWorld == null)
+        {
+            return;
+        }
+
+        if (Width <= 0 || Height <= 0)
+        {
+            return;
+        }
+
+        _frameBuffer.Resize(Width, Height);
+        _frameBuffer.Clear();
+
+        // Brushes: fan-triangulate each face using Hammer-exact UVs (uaxis/vaxis). Faces with
+        // no readable material get a world-aligned checkerboard derived from the face's own
+        // Hammer axes, so missing textures stay glued to the world and zoom consistently.
+        foreach (VmfBrush brush in _referenceWorld.Brushes)
+        {
+            foreach (VmfFace face in brush.Faces)
+            {
+                if (IsNoDraw(face.Material) || (HideToolTextures && IsToolTexture(face.Material)))
+                {
+                    continue;
+                }
+
+                Bitmap texture = MaterialCache.GetMaterialBitmap(face.Material);
+                bool fallback = MaterialCache.IsFallback(texture);
+                int[] bits = GetTexturePixels(texture);
+                int count = face.Vertices.Count;
+                for (int i = 1; i + 1 < count; i++)
+                {
+                    Vec3 v0 = face.Vertices[0];
+                    Vec3 v1 = face.Vertices[i];
+                    Vec3 v2 = face.Vertices[i + 1];
+                    GetUv(v0, face, fallback, texture.Width, texture.Height, out double u0, out double t0);
+                    GetUv(v1, face, fallback, texture.Width, texture.Height, out double u1, out double t1);
+                    GetUv(v2, face, fallback, texture.Width, texture.Height, out double u2, out double t2);
+                    TextureRasterizer.FillTriangle(_frameBuffer,
+                        new TextureRasterizer.Vertex(v0, (float)u0, (float)t0),
+                        new TextureRasterizer.Vertex(v1, (float)u1, (float)t1),
+                        new TextureRasterizer.Vertex(v2, (float)u2, (float)t2),
+                        _eye, _forward, _right, _up, (float)_focal, Width, Height,
+                        bits, texture.Width, texture.Height, fallback);
+                }
+            }
+        }
+
+        // Displacements: each quad becomes two triangles, UV from the side's Hammer axes.
+        foreach (VmfDisplacement displacement in _referenceWorld.Displacements)
+        {
+            if (HideToolTextures && IsToolTexture(displacement.Material))
+            {
+                continue;
+            }
+
+            Bitmap texture = MaterialCache.GetMaterialBitmap(displacement.Material);
+            bool fallback = MaterialCache.IsFallback(texture);
+            int[] bits = GetTexturePixels(texture);
+            int n = displacement.Grid.GetLength(0);
+            for (int r = 0; r + 1 < n; r++)
+            {
+                for (int c = 0; c + 1 < n; c++)
+                {
+                    Vec3 p00 = displacement.Grid[r, c];
+                    Vec3 p10 = displacement.Grid[r, c + 1];
+                    Vec3 p11 = displacement.Grid[r + 1, c + 1];
+                    Vec3 p01 = displacement.Grid[r + 1, c];
+                    GetUv(p00, displacement, fallback, texture.Width, texture.Height, out double u00, out double v00);
+                    GetUv(p10, displacement, fallback, texture.Width, texture.Height, out double u10, out double v10);
+                    GetUv(p11, displacement, fallback, texture.Width, texture.Height, out double u11, out double v11);
+                    GetUv(p01, displacement, fallback, texture.Width, texture.Height, out double u01, out double v01);
+
+                    TextureRasterizer.FillTriangle(_frameBuffer,
+                        new TextureRasterizer.Vertex(p00, (float)u00, (float)v00),
+                        new TextureRasterizer.Vertex(p10, (float)u10, (float)v10),
+                        new TextureRasterizer.Vertex(p11, (float)u11, (float)v11),
+                        _eye, _forward, _right, _up, (float)_focal, Width, Height,
+                        bits, texture.Width, texture.Height, fallback);
+                    TextureRasterizer.FillTriangle(_frameBuffer,
+                        new TextureRasterizer.Vertex(p00, (float)u00, (float)v00),
+                        new TextureRasterizer.Vertex(p11, (float)u11, (float)v11),
+                        new TextureRasterizer.Vertex(p01, (float)u01, (float)v01),
+                        _eye, _forward, _right, _up, (float)_focal, Width, Height,
+                        bits, texture.Width, texture.Height, fallback);
+                }
+            }
+        }
+
+        _frameBuffer.Blit(g, 0, 0);
+    }
+
+    // For missing-texture (fallback) faces the vertex UVs are set to the point's distance along
+    // the face's own Hammer axes in checker-cell units; the rasterizer tiles them into the
+    // checkerboard texture, producing a static, face-aligned grid that zooms with the camera.
+    private static void GetUv(Vec3 p, VmfFace face, bool fallback, double texW, double texH, out double u, out double v)
+    {
+        if (fallback)
+        {
+            u = Vec3.Dot(face.UAxis, p) / TextureRasterizer.FallbackCellSize;
+            v = Vec3.Dot(face.VAxis, p) / TextureRasterizer.FallbackCellSize;
+            return;
+        }
+
+        face.GetUV(p, texW, texH, out u, out v);
+    }
+
+    private static void GetUv(Vec3 p, VmfDisplacement displacement, bool fallback, double texW, double texH, out double u, out double v)
+    {
+        if (fallback)
+        {
+            u = Vec3.Dot(displacement.UAxis, p) / TextureRasterizer.FallbackCellSize;
+            v = Vec3.Dot(displacement.VAxis, p) / TextureRasterizer.FallbackCellSize;
+            return;
+        }
+
+        displacement.GetUV(p, texW, texH, out u, out v);
+    }
+
+    private int[] GetTexturePixels(Bitmap bitmap)
+    {
+        if (_texturePixels.TryGetValue(bitmap, out int[] cached))
+        {
+            return cached;
+        }
+
+        int[] bits = ReadBitmapPixels(bitmap);
+        _texturePixels[bitmap] = bits;
+        return bits;
+    }
+
+    private static int[] ReadBitmapPixels(Bitmap bitmap)
+    {
+        int width = bitmap.Width, height = bitmap.Height;
+        int[] bits = new int[width * height];
+        BitmapData data = bitmap.LockBits(
+            new Rectangle(0, 0, width, height),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppArgb);
+        try
+        {
+            Marshal.Copy(data.Scan0, bits, 0, bits.Length);
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
+
+        return bits;
+    }
+
     private void DrawReferenceWorld(Graphics g)
     {
         if (!ShowReferenceWorld || _referenceWorld == null)
@@ -577,7 +754,7 @@ public sealed class Viewport3D : Control
         {
             foreach (VmfFace face in brush.Faces)
             {
-                if (IsNoDraw(face.Material))
+                if (IsNoDraw(face.Material) || (HideToolTextures && IsToolTexture(face.Material)))
                 {
                     continue;
                 }
@@ -589,6 +766,11 @@ public sealed class Viewport3D : Control
         using Pen displacementPen = new Pen(Color.FromArgb(120, 220, 150), 1f);
         foreach (VmfDisplacement displacement in _referenceWorld.Displacements)
         {
+            if (HideToolTextures && IsToolTexture(displacement.Material))
+            {
+                continue;
+            }
+
             DrawDisplacementWire3D(g, displacement, displacementPen);
         }
     }
@@ -628,6 +810,9 @@ public sealed class Viewport3D : Control
 
     private static bool IsNoDraw(string material) =>
         material != null && material.IndexOf("NODRAW", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static bool IsToolTexture(string material) =>
+        material != null && material.TrimStart('/').StartsWith("tools/", StringComparison.OrdinalIgnoreCase);
 
     protected override void OnMouseDown(MouseEventArgs e)
     {

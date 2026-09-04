@@ -34,6 +34,23 @@ public static class MainWindowHelpers
         button.FlatAppearance.MouseDownBackColor = Color.FromArgb(190, 214, 248);
     }
 
+    /// <summary>Flat toolstrip/statusbar renderer: paints the strip's solid BackColor (no
+    /// gradient "highlight" band behind the labels) and no per-item background, so status
+    /// text is never boxed by a gray highlight.</summary>
+    public sealed class FlatToolStripRenderer : ToolStripRenderer
+    {
+        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+        {
+            using SolidBrush background = new SolidBrush(e.ToolStrip.BackColor);
+            e.Graphics.FillRectangle(background, e.AffectedBounds);
+        }
+
+        protected override void OnRenderItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            // Intentionally empty: no hover/selected highlight behind items.
+        }
+    }
+
     public static void AddSettingRow(TableLayoutPanel table, int row, string label, Control control)
     {
         Label lbl = new Label

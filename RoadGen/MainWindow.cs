@@ -32,7 +32,22 @@ public sealed partial class MainWindow : Form
         CheckOnClick = true,
         Checked = true
     };
-    
+    private readonly ToolStripButton _btnTextures = new ToolStripButton("Textures")
+    {
+        CheckOnClick = true,
+        Checked = false
+    };
+    private readonly ToolStripButton _btnLayoutGrid = new ToolStripButton("Layout grid")
+    {
+        CheckOnClick = true,
+        Checked = true
+    };
+    private readonly ToolStripButton _btnHideTools = new ToolStripButton("Hide tools")
+    {
+        CheckOnClick = true,
+        Checked = true
+    };
+    private readonly ToolStripStatusLabel _statusMounted = new ToolStripStatusLabel();
     private bool _syncingGrid;
 
     private readonly Viewport3D _v3d = new Viewport3D();
@@ -124,6 +139,10 @@ public sealed partial class MainWindow : Form
     private const int RepeatDebounceMs = 500;
     private const int RepeatIntervalMs = 250;
 
+    // Debounced write of the missing-materials report. Each new miss (raised while a textured
+    // frame is being painted) restarts it, so the file reflects the settled frame's misses.
+    private System.Windows.Forms.Timer _missingReportTimer;
+
     private int _selectedIndex = -1;
     private bool _loading;
     private string _currentTrackPath;
@@ -150,6 +169,13 @@ public sealed partial class MainWindow : Form
         BackColor = Color.FromArgb(30, 30, 34);
 
         BuildTopActionBar();
+        // Mount every installed Source content folder (loose files + *_dir.vpk), including
+        // VPK-only shared content like TF2's "hl2" — this is what makes shared textures resolve.
+        _v3d.MaterialCache.SetContentRoots(GamePaths.AllInstalledContentFolders());
+        WriteDiscoveryReport(GamePaths.DiscoveryReport());
+        _v3d.MaterialCache.MissingMaterialFound += OnMissingMaterialFound;
+        _missingReportTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        _missingReportTimer.Tick += OnMissingReportTick;
         BuildLayout();
         ConfigureIncrementControls();
         WireEvents();
@@ -163,6 +189,8 @@ public sealed partial class MainWindow : Form
             _layoutWatcher = null;
             _layoutReloadTimer?.Dispose();
             _layoutReloadTimer = null;
+            _missingReportTimer?.Dispose();
+            _missingReportTimer = null;
         };
 
         SeedDefaultRoad();
@@ -226,6 +254,17 @@ public sealed partial class MainWindow : Form
         _gridCombo.DropDownWidth = 90;
         topActionBar.Items.Add(new ToolStripLabel("Grid:"));
         topActionBar.Items.Add(_gridCombo);
+
+        // Reference-world texturing toggle. Installed Source games are auto-mounted from the
+        // Steam libraries, so no game directory picker or game selector is needed.
+        topActionBar.Items.Add(new ToolStripSeparator());
+        topActionBar.Items.Add(_btnTextures);
+        // Layout grid overlay toggle: shows/hides the imported layout's wireframe grid so the
+        // textured layout can be viewed on its own.
+        topActionBar.Items.Add(_btnLayoutGrid);
+        // Tool-texture filter: hides imported faces whose material is a Source tool texture
+        // (tools/* such as clip/skip/areaportal) so only real geometry shows. On by default.
+        topActionBar.Items.Add(_btnHideTools);
 
         topActionBar.Items.Add(new ToolStripSeparator());
         _btnUndo = ToolButton("Undo", (s, e) => DoUndo());
@@ -292,11 +331,23 @@ public sealed partial class MainWindow : Form
         _split.Panel1.Controls.Add(_topActionBar);
         _split.Panel2.Controls.Add(BuildSidePanel());
 
-        StatusStrip statusBar = new StatusStrip();
+        // Flat, dark status bar matching the window. The default WinForms StatusStrip draws a
+        // gray gradient "highlight" band behind its labels; a flat renderer + matching colors
+        // remove that band so the text has no boxed background.
+        StatusStrip statusBar = new StatusStrip
+        {
+            BackColor = Color.FromArgb(30, 30, 34),
+            ForeColor = Color.FromArgb(200, 205, 215),
+            SizingGrip = false,
+            Renderer = new FlatToolStripRenderer()
+        };
         statusBar.Items.Add(new ToolStripStatusLabel
         {
-            Text = "2D: ctrl+click add, drag to move, shift+drag breaks a weld, drag empty space to box-select  •  3D: right-drag orbit, middle-drag pan, click select  •  [ / ] change grid"
+            Text = "2D: ctrl+click add, drag to move, shift+drag breaks a weld, drag empty space to box-select  •  3D: right-drag orbit, middle-drag pan, click select  •  [ / ] change grid",
+            ForeColor = Color.FromArgb(200, 205, 215)
         });
+        _statusMounted.ForeColor = Color.FromArgb(225, 230, 240);
+        statusBar.Items.Add(_statusMounted);
 
         Panel mainContent = new Panel { Dock = DockStyle.Fill };
         mainContent.Controls.Add(_split);
@@ -1079,6 +1130,9 @@ public sealed partial class MainWindow : Form
         _cboSnap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _gridCombo.SelectedIndexChanged += (s, e) => ApplyGridCombo();
         _btnSnap.CheckedChanged += (s, e) => ApplySnapToggle();
+        _btnTextures.CheckedChanged += (s, e) => ApplyTexturesToggle();
+        _btnLayoutGrid.CheckedChanged += (s, e) => ApplyLayoutGridToggle();
+        _btnHideTools.CheckedChanged += (s, e) => ApplyHideToolsToggle();
         _chkSolidLeft.CheckedChanged += (s, e) => ApplySettingsFromControls();
         _chkSolidRight.CheckedChanged += (s, e) => ApplySettingsFromControls();
         _chkSolidBottom.CheckedChanged += (s, e) => ApplySettingsFromControls();
@@ -2648,6 +2702,149 @@ public sealed partial class MainWindow : Form
         _doc.Settings.SnapEnabled = _btnSnap.Checked;
         _doc.NotifyChanged();
         UpdateUndoButtons();
+    }
+
+    private void ApplyTexturesToggle()
+    {
+        bool enabled = _btnTextures.Checked;
+        _v3d.ShowTexturedReference = enabled;
+        if (enabled)
+        {
+            // The first textured frame fills the missing log; refresh the status and the
+            // on-disk report once the misses have settled.
+            _missingReportTimer.Stop();
+            _missingReportTimer.Start();
+        }
+
+        UpdateTextureStatus();
+        InvalidateAll();
+    }
+
+    private void ApplyLayoutGridToggle()
+    {
+        _v3d.ShowReferenceWorld = _btnLayoutGrid.Checked;
+        InvalidateAll();
+    }
+
+    private void ApplyHideToolsToggle()
+    {
+        bool hide = _btnHideTools.Checked;
+        _v3d.HideToolTextures = hide;
+        _top.HideToolTextures = hide;
+        _front.HideToolTextures = hide;
+        _side.HideToolTextures = hide;
+        InvalidateAll();
+    }
+
+    /// <summary>Refreshes the status label from the mounted content folders and the live
+    /// missing-material count (also used after the report timer settles).</summary>
+    private void UpdateTextureStatus()
+    {
+        var mounts = _v3d.MaterialCache.Mounts;
+        if (!_btnTextures.Checked)
+        {
+            _statusMounted.Text = "";
+            _statusMounted.ToolTipText = mounts.Count == 0 ? GamePaths.DiscoveryReport() : "";
+            return;
+        }
+
+        long files = 0;
+        foreach (var mount in mounts)
+        {
+            files += mount.FileCount;
+        }
+
+        int missing = _v3d.MaterialCache.MissingMaterialCount;
+        _statusMounted.Text = mounts.Count == 0
+            ? "Textures: no Source content found"
+            : $"Textures: {mounts.Count} content folder(s), {files:N0} file(s)" +
+              (missing > 0 ? $", {missing} missing" : "");
+
+        var tooltip = new System.Text.StringBuilder();
+        if (mounts.Count == 0)
+        {
+            tooltip.Append(GamePaths.DiscoveryReport());
+        }
+        else
+        {
+            tooltip.AppendLine("Mounted content folders:");
+            foreach (var mount in mounts)
+            {
+                tooltip.Append("  ").Append(mount.Describe()).Append('\n');
+            }
+
+            if (missing > 0)
+            {
+                tooltip.Append('\n').Append(missing).Append(" material(s) missing — see " +
+                    "missing-materials.txt (in %AppData%\\RoadGen) for why\n");
+                int shown = 0;
+                foreach (var miss in _v3d.MaterialCache.MissingMaterials)
+                {
+                    if (shown >= 8)
+                    {
+                        tooltip.AppendLine("  …");
+                        break;
+                    }
+
+                    tooltip.Append("  ").Append(miss.Key).Append('\n');
+                    shown++;
+                }
+            }
+        }
+
+        _statusMounted.ToolTipText = tooltip.ToString();
+    }
+
+    private void OnMissingMaterialFound(string materialPath)
+    {
+        // A miss was just recorded while painting a textured frame. Debounce so we write the
+        // report once, after the current frame's lookups have finished.
+        _missingReportTimer.Stop();
+        _missingReportTimer.Start();
+    }
+
+    private void OnMissingReportTick(object sender, EventArgs e)
+    {
+        _missingReportTimer.Stop();
+        WriteMissingMaterialsReport();
+        UpdateTextureStatus();
+    }
+
+    /// <summary>Writes the missing-material log to %AppData%\RoadGen\missing-materials.txt so
+    /// leftover checkerboard faces can be diagnosed (which material, and why it wasn't found:
+    /// no file at all, .vmt without $basetexture, or a $basetexture that is itself missing).</summary>
+    private void WriteMissingMaterialsReport()
+    {
+        try
+        {
+            string dir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RoadGen");
+            System.IO.Directory.CreateDirectory(dir);
+            System.IO.File.WriteAllText(
+                System.IO.Path.Combine(dir, "missing-materials.txt"),
+                _v3d.MaterialCache.MissingMaterialsReport());
+        }
+        catch (Exception)
+        {
+            // Diagnostics must never crash the app.
+        }
+    }
+
+    /// <summary>Writes the auto-discovery diagnostics to %AppData%\RoadGen\discovery-report.txt
+    /// so a broken machine can be debugged by opening that file.</summary>
+    private static void WriteDiscoveryReport(string report)
+    {
+        try
+        {
+            string dir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RoadGen");
+            System.IO.Directory.CreateDirectory(dir);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "discovery-report.txt"), report);
+        }
+        catch (Exception)
+        {
+            // Diagnostics must never crash the app.
+        }
     }
 
     private void SyncGridCombo()

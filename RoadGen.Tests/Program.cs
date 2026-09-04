@@ -1,5 +1,6 @@
 using System.Globalization;
 using RoadGen.Core;
+using RoadGen.Tests;
 
 // A dependency-free test runner. Each test is a local function that throws on
 // failure. Run with: dotnet run --project RoadGen.Tests
@@ -31,6 +32,12 @@ Run("Merging two welded roads keeps the sidewalk continuous to the very end", Te
 Run("Merging a start-to-start join keeps each sidewalk on its own side", TestMergeKeepsEachSidewalkOnItsOwnSide);
 Run("Undo removes a just-added sidewalk; redo brings it back", TestUndoRestoresSnapshot);
 Run("Editing one field is a single undo step", TestUndoBatchCoalesces);
+
+// Test areas each expose their own cases; VMT parser regressions live in VmtParserTests.cs.
+foreach ((string name, Action body) in VmtParserTests.Cases())
+{
+    Run(name, body);
+}
 
 Console.WriteLine();
 Console.WriteLine($"{passed} passed, {failed} failed");
@@ -948,3 +955,4 @@ void TestUndoBatchCoalesces()
     AssertEqual(0.0, document.Tracks[0].Points[0].BankDegrees, "bank restored");
     AssertTrue(!undo.CanUndo, "the whole batch undid in one step");
 }
+

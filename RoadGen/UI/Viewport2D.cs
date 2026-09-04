@@ -98,6 +98,11 @@ public sealed class Viewport2D : Control
     public bool ShowFeatureSegments;
     public bool ShowReferenceWorld = true;
 
+    /// <summary>When true (default), faces of the imported layout whose material is a Source
+    /// tool texture (tools/*, e.g. clip/skip/areaportal) are not drawn, matching Hammer hiding
+    /// tool brushes from the view.</summary>
+    public bool HideToolTextures = true;
+
     /// <summary>Sets the imported VMF layout to render as a reference behind the road.</summary>
     public void SetReferenceWorld(VmfWorld world)
     {
@@ -837,7 +842,7 @@ public sealed class Viewport2D : Control
         {
             foreach (VmfFace face in brush.Faces)
             {
-                if (IsNoDraw(face.Material))
+                if (IsNoDraw(face.Material) || (HideToolTextures && IsToolTexture(face.Material)))
                 {
                     continue;
                 }
@@ -849,6 +854,11 @@ public sealed class Viewport2D : Control
         using Pen displacementPen = new Pen(Color.FromArgb(120, 220, 150), 1f);
         foreach (VmfDisplacement displacement in _referenceWorld.Displacements)
         {
+            if (HideToolTextures && IsToolTexture(displacement.Material))
+            {
+                continue;
+            }
+
             DrawDisplacementWire(g, displacement, displacementPen);
         }
     }
@@ -888,6 +898,9 @@ public sealed class Viewport2D : Control
 
     private static bool IsNoDraw(string material) =>
         material != null && material.IndexOf("NODRAW", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static bool IsToolTexture(string material) =>
+        material != null && material.TrimStart('/').StartsWith("tools/", StringComparison.OrdinalIgnoreCase);
 
     // ----- world/screen mapping -----
 
