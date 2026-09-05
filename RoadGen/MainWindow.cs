@@ -64,6 +64,9 @@ public sealed partial class MainWindow : Form
     // read-only and open the browser when clicked, mirroring the Hammer material picker.
     private readonly Button _btnBrowseMaterial = new Button();
     private readonly Button _btnBrowseEdgeMaterial = new Button();
+    // Edge face selector: picks which face (Top / Inner / Outer / Bottom) the edge feature's
+    // Material field shows and edits. Blank inner/outer/bottom values inherit the top.
+    private readonly ComboBox _cboEdgeFaceMaterial = new ComboBox();
 
     private readonly Viewport3D _v3d = new Viewport3D();
     private readonly Viewport2D _top = new Viewport2D();
@@ -123,6 +126,9 @@ public sealed partial class MainWindow : Form
     private readonly ComboBox _cboSnap = new ComboBox();
     private readonly ComboBox _cboPower = new ComboBox();
     private readonly TextBox _txtMaterial = new TextBox();
+    // Road face selector: picks which face (Top / Left side / Right side / Bottom) the
+    // Material field shows and edits. Blank side/bottom values mean the face uses the top.
+    private readonly ComboBox _cboFaceMaterial = new ComboBox();
     private readonly CheckBox _chkSolidLeft = new CheckBox();
     private readonly CheckBox _chkSolidRight = new CheckBox();
     private readonly CheckBox _chkSolidBottom = new CheckBox();
@@ -412,7 +418,7 @@ public sealed partial class MainWindow : Form
         {
             Text = "Track Controls",
             Dock = DockStyle.Top,
-            Height = 640,
+            Height = 645,
             Padding = new Padding(6),
             ForeColor = Color.LightGray
         };
@@ -558,14 +564,14 @@ public sealed partial class MainWindow : Form
         TableLayoutPanel roadSettingsInputs = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 115,
+            Height = 92,
             ColumnCount = 2,
-            RowCount = 5,
+            RowCount = 4,
             Padding = new Padding(0)
         };
         roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int r = 0; r < 5; r++)
+        for (int r = 0; r < 4; r++)
         {
             roadSettingsInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
         }
@@ -587,12 +593,20 @@ public sealed partial class MainWindow : Form
         // Material field + its "…" browse button (clicking either opens the material browser).
         Control materialFieldHost = MakeMaterialFieldHost(_txtMaterial, _btnBrowseMaterial);
 
+        // Face selector for the Material group: which face the field shows/edits. Side and
+        // bottom faces left blank inherit the Top material (see RoadSettings.FaceMaterial).
+        _cboFaceMaterial.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboFaceMaterial.Items.AddRange(new object[] { "Top", "Left side", "Right side", "Bottom" });
+        _cboFaceMaterial.SelectedIndex = 0;
+        _cboFaceMaterial.Dock = DockStyle.Fill;
+        GroupBox materialSection = MakeMaterialGroup(_cboFaceMaterial, materialFieldHost);
+        materialSection.Dock = DockStyle.Top;
+
         AddSettingRow(roadSettingsInputs, 0, "Power", _cboPower);
-        AddSettingRow(roadSettingsInputs, 1, "Material", materialFieldHost);
-        AddSettingRow(roadSettingsInputs, 2, "Texture scale", _numTexScale);
+        AddSettingRow(roadSettingsInputs, 1, "Texture scale", _numTexScale);
         _numTexScale.Increment = 0.25m;
-        AddSettingRow(roadSettingsInputs, 3, "Lightmap scale", _cboLightmap);
-        AddSettingRow(roadSettingsInputs, 4, "Grid snap", _cboSnap);
+        AddSettingRow(roadSettingsInputs, 2, "Lightmap scale", _cboLightmap);
+        AddSettingRow(roadSettingsInputs, 3, "Grid snap", _cboSnap);
 
         // Solid Roads + Enable track joining, directly under the point table.
         GroupBox solidRoadsSection = new GroupBox
@@ -633,31 +647,33 @@ public sealed partial class MainWindow : Form
 
         // Bottom band holds the reduced road-settings / selected-point editor as two columns:
         // [Add Point / Remove Point] on the LEFT, the properties filling the rest of the width.
-        // The point table + Solid Roads sit ABOVE this band, full width (Move Up/Down are
-        // removed entirely; Ctrl+A / Del still add/remove points).
+        // No top padding here so the Material box (the right column's first control) docks flush
+        // with the band top, exactly level with the Point Controls box on the left. The left
+        // padding is the gap between the two columns.
         Panel propertiesColumn = new Panel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(4, 4, 0, 0)
+            Padding = new Padding(4, 0, 0, 0)
         };
 
         roadSettingsInputs.Dock = DockStyle.Top;
         controlPointEditorRows.Dock = DockStyle.Top;
         propertiesColumn.Controls.Add(controlPointEditorRows);
         propertiesColumn.Controls.Add(roadSettingsInputs);
+        propertiesColumn.Controls.Add(materialSection);
 
         // "Point Controls" box: Add Point / Remove Point, top-aligned (no vertical centering)
         // but centered horizontally as a fixed-width pair (two flexible columns around it).
-        GroupBox trackControlsSection = new GroupBox
+        GroupBox pointControlsSection = new GroupBox
         {
             Text = "Point Controls",
             Dock = DockStyle.Top,
-            Height = 92,
+            Height = 80,
             Padding = new Padding(4, 2, 4, 4),
             ForeColor = Color.LightGray
         };
 
-        TableLayoutPanel trackControlsCenter = new TableLayoutPanel
+        TableLayoutPanel pointsControlsCenter = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
@@ -665,19 +681,19 @@ public sealed partial class MainWindow : Form
             Padding = new Padding(0)
         };
 
-        trackControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        trackControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
-        trackControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        trackControlsCenter.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        pointsControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        pointsControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+        pointsControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        pointsControlsCenter.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _btnAddPoint = new Button { Text = "Add Point", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 4) };
-        _btnRemovePoint = new Button { Text = "Remove Point", Dock = DockStyle.Fill, Margin = new Padding(0) };
+        _btnRemovePoint = new Button { Text = "Remove Point", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 4) };
         StyleLayerButton(_btnAddPoint);
         StyleLayerButton(_btnRemovePoint);
         _btnAddPoint.Click += (s, e) => AddPoint();
         _btnRemovePoint.Click += (s, e) => RemovePoint();
 
-        TableLayoutPanel trackControlsButtons = new TableLayoutPanel
+        TableLayoutPanel pointControlsButtons = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             ColumnCount = 1,
@@ -686,17 +702,17 @@ public sealed partial class MainWindow : Form
             Padding = new Padding(0)
         };
 
-        trackControlsButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-        trackControlsButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-        trackControlsButtons.Controls.Add(_btnAddPoint, 0, 0);
-        trackControlsButtons.Controls.Add(_btnRemovePoint, 0, 1);
+        pointControlsButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        pointControlsButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        pointControlsButtons.Controls.Add(_btnAddPoint, 0, 0);
+        pointControlsButtons.Controls.Add(_btnRemovePoint, 0, 1);
 
-        trackControlsCenter.Controls.Add(trackControlsButtons, 1, 0);
-        trackControlsSection.Controls.Add(trackControlsCenter);
+        pointsControlsCenter.Controls.Add(pointControlsButtons, 1, 0);
+        pointControlsSection.Controls.Add(pointsControlsCenter);
 
         // Left column stacks the "Point Controls" box (Add/Remove) with the Cordon box right
-        // under it. The cordon box keeps its full 178 px height and its width (the column is
-        // wider than the original 135, so it never shrinks).
+        // under it. The cordon box is sized to its content; its width (the column is wider
+        // than the original 135, so it never shrinks) is what matters here.
         GroupBox cordonSection = BuildCordonSection();
         Panel trackLeftColumn = new Panel
         {
@@ -705,7 +721,7 @@ public sealed partial class MainWindow : Form
             Padding = new Padding(0, 0, 4, 0)
         };
         trackLeftColumn.Controls.Add(cordonSection);
-        trackLeftColumn.Controls.Add(trackControlsSection);
+        trackLeftColumn.Controls.Add(pointControlsSection);
 
         Panel bottomColumns = new Panel
         {
@@ -715,6 +731,14 @@ public sealed partial class MainWindow : Form
         };
         bottomColumns.Controls.Add(propertiesColumn);   // Fill (processed last, fills the rest)
         bottomColumns.Controls.Add(trackLeftColumn);    // Left (processed first, left edge)
+
+        // The bottom band is two side-by-side columns of different heights, so a fixed height
+        // can't fit both. Size the band to the taller (right) column's content, then stretch
+        // the Cordon box to fill the left column — its extra room lands in the gap above the
+        // bounds read-out, so the two columns bottom out on the same line with no dead space.
+        int rightBand = propertiesColumn.Padding.Top + materialSection.Height + roadSettingsInputs.Height + controlPointEditorRows.Height;
+        bottomColumns.Height = rightBand;
+        cordonSection.Height = rightBand - pointControlsSection.Height;
 
         // Point table + Solid Roads, full width, above the bottom columns.
         Panel pointTableArea = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0) };
@@ -836,15 +860,15 @@ public sealed partial class MainWindow : Form
         TableLayoutPanel edgeInputs = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 192,
+            Height = 168,
             ColumnCount = 3,
-            RowCount = 8,
+            RowCount = 7,
             Padding = new Padding(0)
         };
         edgeInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
         edgeInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
         edgeInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int r = 0; r < 8; r++)
+        for (int r = 0; r < 7; r++)
         {
             edgeInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         }
@@ -860,15 +884,23 @@ public sealed partial class MainWindow : Form
         // Feature material field + its "…" browse button (clicking either opens the browser).
         Control edgeMaterialFieldHost = MakeMaterialFieldHost(_txtEdgeMaterial, _btnBrowseEdgeMaterial);
 
-  
         AddIncrementRow(edgeInputs, 0, "Kind", _cboEdgeKind, null);
         AddIncrementRow(edgeInputs, 1, "Side", _cboEdgeSide, null);
-        AddIncrementRow(edgeInputs, 2, "Material", edgeMaterialFieldHost, null);
-        AddIncrementRow(edgeInputs, 3, "Offset", _numEdgeOffset, BuildIncrementCell(_chkEdgeIncOffset, _numEdgeIncOffset, followGrid: true, customValue: 64m));
-        AddIncrementRow(edgeInputs, 4, "Width", _numEdgeWidth, BuildIncrementCell(_chkEdgeIncWidth, _numEdgeIncWidth, followGrid: true, customValue: 64m));
-        AddIncrementRow(edgeInputs, 5, "Bank", _numEdgeBank, BuildIncrementCell(_chkEdgeIncBank, _numEdgeIncBank, followGrid: false, customValue: 4m));
-        AddIncrementRow(edgeInputs, 6, "Top Z", _numEdgeTopZ, BuildIncrementCell(_chkEdgeIncTopZ, _numEdgeIncTopZ, followGrid: true, customValue: 64m));
-        AddIncrementRow(edgeInputs, 7, "Bottom Z", _numEdgeBottomZ, BuildIncrementCell(_chkEdgeIncBottomZ, _numEdgeIncBottomZ, followGrid: true, customValue: 64m));
+        // Face selector for the Material group: which face the field shows/edits. Blank
+        // inner/outer/bottom faces inherit the feature's Top material
+        // (see EdgeFeature.FaceMaterial). The material UI lives in its own "Material"
+        // group above Kind, not as a row in the value grid.
+        _cboEdgeFaceMaterial.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboEdgeFaceMaterial.Items.AddRange(new object[] { "Top", "Inner", "Outer", "Bottom" });
+        _cboEdgeFaceMaterial.SelectedIndex = 0;
+        _cboEdgeFaceMaterial.Dock = DockStyle.Fill;
+        GroupBox edgeMaterialSection = MakeMaterialGroup(_cboEdgeFaceMaterial, edgeMaterialFieldHost);
+        edgeMaterialSection.Dock = DockStyle.Bottom;
+        AddIncrementRow(edgeInputs, 2, "Offset", _numEdgeOffset, BuildIncrementCell(_chkEdgeIncOffset, _numEdgeIncOffset, followGrid: true, customValue: 64m));
+        AddIncrementRow(edgeInputs, 3, "Width", _numEdgeWidth, BuildIncrementCell(_chkEdgeIncWidth, _numEdgeIncWidth, followGrid: true, customValue: 64m));
+        AddIncrementRow(edgeInputs, 4, "Bank", _numEdgeBank, BuildIncrementCell(_chkEdgeIncBank, _numEdgeIncBank, followGrid: false, customValue: 4m));
+        AddIncrementRow(edgeInputs, 5, "Top Z", _numEdgeTopZ, BuildIncrementCell(_chkEdgeIncTopZ, _numEdgeIncTopZ, followGrid: true, customValue: 64m));
+        AddIncrementRow(edgeInputs, 6, "Bottom Z", _numEdgeBottomZ, BuildIncrementCell(_chkEdgeIncBottomZ, _numEdgeIncBottomZ, followGrid: true, customValue: 64m));
 
         _numEdgeOffset.Minimum = -100000;
         _numEdgeBottomZ.Minimum = -100000;
@@ -878,6 +910,7 @@ public sealed partial class MainWindow : Form
         edgeFeaturesSection.Controls.Add(_lstEdgePoints);
         edgeFeaturesSection.Controls.Add(edgeListHost);
         edgeFeaturesSection.Controls.Add(edgeFaceToggleRow);
+        edgeFeaturesSection.Controls.Add(edgeMaterialSection);
         edgeFeaturesSection.Controls.Add(edgeInputs);
 
         // "Display" group with two subsections for the preview toggles:
@@ -997,7 +1030,7 @@ public sealed partial class MainWindow : Form
     }
 
     /// <summary>Builds the cordon control box that sits directly under the Control Points
-    /// group (full width, never smaller than its fixed 178 px height). Top to bottom:
+    /// group (full width, sized to fit its rows). Top to bottom:
     /// "Edit cordon" (arms the tool so a left-drag in the 2D views redraws the box), "Active"
     /// (turns cordoning on — the box goes red and the imported layout outside it is hidden /
     /// excluded from export), "Fit to map" (re-seeds the box to the whole imported layout),
@@ -1033,18 +1066,30 @@ public sealed partial class MainWindow : Form
         _btnCordonFit.AutoSize = false;
         StyleLayerButton(_btnCordonFit);
 
-        _lblCordonBounds.Dock = DockStyle.Top;
-        _lblCordonBounds.Height = 78;
+        _lblCordonBounds.Dock = DockStyle.Bottom;
         _lblCordonBounds.Font = new Font("Consolas", 7.5f);
+        // The read-out is always 3 monospaced lines (or a one-line "box not set" fallback),
+        // so size the label from its font (old fixed 78 px left a blank strip under "Z").
+        _lblCordonBounds.Height = (int)Math.Ceiling(_lblCordonBounds.Font.GetHeight() * 3) + 4;
         _lblCordonBounds.ForeColor = Color.FromArgb(170, 180, 195);
         _lblCordonBounds.Text = "";
 
-        // Dock.Top children stack in reverse z-order (last added docks at the very top), so
-        // controls are added bottom-first: bounds read-out, Fit, Active, Edit cordon.
-        box.Controls.Add(_lblCordonBounds);
+        // Docked layout claims in reverse z-order (last added first), so the read-out is
+        // added last to dock to the BOTTOM edge, then the three rows stack from the top
+        // (Edit cordon, Active, Fit to map). Any extra height the caller gives this box
+        // becomes a gap between "Fit to map" and the read-out — never dead space at the
+        // bottom — which is how the side panel makes the cordon column bottom out flush.
         box.Controls.Add(_btnCordonFit);
         box.Controls.Add(_chkCordonActive);
         box.Controls.Add(_chkCordonEdit);
+        box.Controls.Add(_lblCordonBounds);
+
+        // Tight (minimum content) height: the three top rows + the read-out + the ~28 px of
+        // title/border/padding overhead. BuildSidePanel stretches it taller to line the two
+        // bottom-band columns up.
+        int rowTotal = _chkCordonEdit.Height + _chkCordonActive.Height + _btnCordonFit.Height
+                       + _lblCordonBounds.Height;
+        box.Height = 28 + rowTotal;
 
         return box;
     }
@@ -1163,6 +1208,41 @@ public sealed partial class MainWindow : Form
         return host;
     }
 
+    /// <summary>Builds a titled "Material" group containing a face-selector dropdown
+    /// (which face the field shows/edits) beside the material field, so the material UI
+    /// reads as its own framed section instead of a row that has to imitate its
+    /// neighbours. Caller sets the Dock placement; row height is 23.</summary>
+    private static GroupBox MakeMaterialGroup(ComboBox face, Control fieldHost)
+    {
+        GroupBox group = new GroupBox
+        {
+            Text = "Material",
+            Height = 54,
+            // Extra bottom padding keeps the dropdown/field row from touching the box's
+            // bottom border. The height is a little taller than the 23px content row so the
+            // inset never squeezes or clips the controls.
+            Padding = new Padding(6, 2, 6, 6),
+            ForeColor = Color.LightGray
+        };
+
+        TableLayoutPanel row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            Padding = new Padding(0)
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
+
+        face.Dock = DockStyle.Fill;
+        row.Controls.Add(face, 0, 0);
+        row.Controls.Add(fieldHost, 1, 0);
+        group.Controls.Add(row);
+        return group;
+    }
+
     /// <summary>Opens the material browser pre-set to the field's current material. On a pick,
     /// the field text is replaced — the existing TextChanged handlers then push the value into
     /// the road settings / selected edge feature, so it behaves exactly like typing it.</summary>
@@ -1268,11 +1348,11 @@ public sealed partial class MainWindow : Form
         {
             _lstLayers, _list, _lstEdges, _lstEdgePoints,
             _numX, _numY, _numZ, _numWidth, _numBank, _trackThickness,
-            _numTexScale, _cboPower, _cboSnap, _cboLightmap, _txtMaterial,
+            _numTexScale, _cboPower, _cboSnap, _cboLightmap, _txtMaterial, _cboFaceMaterial,
             _numIncX, _numIncY, _numIncZ, _numIncWidth, _numIncBank, _numIncThickness,
             _numEdgeOffset, _numEdgeWidth, _numEdgeBottomZ, _numEdgeTopZ, _numEdgeBank,
             _numEdgeIncOffset, _numEdgeIncWidth, _numEdgeIncBottomZ, _numEdgeIncTopZ, _numEdgeIncBank,
-            _cboEdgeKind, _cboEdgeSide, _txtEdgeMaterial
+            _cboEdgeKind, _cboEdgeSide, _txtEdgeMaterial, _cboEdgeFaceMaterial
         };
         foreach (Control inputControl in darkTextInputs)
         {
@@ -1573,6 +1653,7 @@ public sealed partial class MainWindow : Form
         _numEdgeTopZ.ValueChanged += (s, e) => ApplyEdgePointFromEditor();
         _numEdgeBank.ValueChanged += (s, e) => ApplyEdgePointFromEditor();
         _txtEdgeMaterial.TextChanged += (s, e) => ApplyEdgeFromEditor();
+        _cboEdgeFaceMaterial.SelectedIndexChanged += (s, e) => ShowSelectedEdgeFaceMaterial();
         _chkEdgeBottom.CheckedChanged += (s, e) => ApplyEdgeFromEditor();
         _chkEdgeInner.CheckedChanged += (s, e) => ApplyEdgeFromEditor();
         _chkEdgeOuter.CheckedChanged += (s, e) => ApplyEdgeFromEditor();
@@ -1620,6 +1701,7 @@ public sealed partial class MainWindow : Form
 
         _cboPower.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _txtMaterial.TextChanged += (s, e) => ApplySettingsFromControls();
+        _cboFaceMaterial.SelectedIndexChanged += (s, e) => ShowSelectedFaceMaterial();
         _numTexScale.ValueChanged += (s, e) => ApplySettingsFromControls();
         _cboLightmap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _cboSnap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
@@ -2195,7 +2277,8 @@ public sealed partial class MainWindow : Form
         _cboEdgeKind.SelectedIndex = (int)feature.Kind;
         _cboEdgeSide.SelectedIndex = feature.LeftSide ? 0 : 1;
         _numEdgeOffset.Value = (decimal)feature.Offset;
-        _txtEdgeMaterial.Text = feature.Material;
+        // Field shows the selected face's stored material (blank inner/outer/bottom = top).
+        _txtEdgeMaterial.Text = MaterialOfSelectedEdgeFace(feature);
         _chkEdgeBottom.Checked = feature.SolidBottom;
         _chkEdgeInner.Checked = feature.SolidInner;
         _chkEdgeOuter.Checked = feature.SolidOuter;
@@ -2260,6 +2343,53 @@ public sealed partial class MainWindow : Form
         _loading = false;
     }
 
+    /// <summary>The material stored for the face the edge selector currently shows (Top /
+    /// Inner / Outer / Bottom). Inner/outer/bottom return their raw override, which is blank
+    /// while they're inheriting the feature's top material.</summary>
+    private string MaterialOfSelectedEdgeFace(EdgeFeature feature)
+    {
+        switch (_cboEdgeFaceMaterial.SelectedIndex)
+        {
+            case 1: return feature.InnerMaterial;
+            case 2: return feature.OuterMaterial;
+            case 3: return feature.BottomMaterial;
+            default: return feature.Material;
+        }
+    }
+
+    /// <summary>Writes a material into whichever face the edge selector currently shows
+    /// (Top / Inner / Outer / Bottom).</summary>
+    private void SetMaterialOnSelectedEdgeFace(EdgeFeature feature, string value)
+    {
+        switch (_cboEdgeFaceMaterial.SelectedIndex)
+        {
+            case 1: feature.InnerMaterial = value; break;
+            case 2: feature.OuterMaterial = value; break;
+            case 3: feature.BottomMaterial = value; break;
+            default: feature.Material = value; break;
+        }
+    }
+
+    /// <summary>Swaps the edge material field to show the newly selected face's stored
+    /// material (a display-only change — no document edit, so no undo step).</summary>
+    private void ShowSelectedEdgeFaceMaterial()
+    {
+        if (_loading || _doc.ActiveTrack == null)
+        {
+            return;
+        }
+
+        int index = _lstEdges.SelectedIndex;
+        if (index < 0 || index >= _doc.ActiveTrack.EdgeFeatures.Count)
+        {
+            return;
+        }
+
+        _loading = true;
+        _txtEdgeMaterial.Text = MaterialOfSelectedEdgeFace(_doc.ActiveTrack.EdgeFeatures[index]);
+        _loading = false;
+    }
+
     private void ApplyEdgeFromEditor()
     {
         if (_loading || _doc.ActiveTrack == null)
@@ -2278,7 +2408,7 @@ public sealed partial class MainWindow : Form
         feature.Kind = (EdgeFeatureKind)_cboEdgeKind.SelectedIndex;
         feature.LeftSide = _cboEdgeSide.SelectedIndex == 0;
         feature.Offset = (double)_numEdgeOffset.Value;
-        feature.Material = _txtEdgeMaterial.Text;
+        SetMaterialOnSelectedEdgeFace(feature, _txtEdgeMaterial.Text);
         feature.SolidBottom = _chkEdgeBottom.Checked;
         feature.SolidInner = _chkEdgeInner.Checked;
         feature.SolidOuter = _chkEdgeOuter.Checked;
@@ -2377,6 +2507,7 @@ public sealed partial class MainWindow : Form
         _numEdgeTopZ.Enabled = enabled;
         _numEdgeBank.Enabled = enabled;
         _txtEdgeMaterial.Enabled = enabled;
+        _cboEdgeFaceMaterial.Enabled = enabled;
         _btnBrowseEdgeMaterial.Enabled = enabled;
         _chkEdgeBottom.Enabled = enabled;
         _chkEdgeInner.Enabled = enabled;
@@ -3199,6 +3330,47 @@ public sealed partial class MainWindow : Form
         _doc.NotifyChanged();
     }
 
+    /// <summary>The material stored for the face the road selector currently shows
+    /// (Top / Left side / Right side / Bottom). Side/bottom faces return their raw override,
+    /// which is blank while they're inheriting the top.</summary>
+    private string MaterialOfSelectedFace(RoadSettings settings)
+    {
+        switch (_cboFaceMaterial.SelectedIndex)
+        {
+            case 1: return settings.LeftMaterial;
+            case 2: return settings.RightMaterial;
+            case 3: return settings.BottomMaterial;
+            default: return settings.Material;
+        }
+    }
+
+    /// <summary>Writes a material into whichever face the road selector currently shows
+    /// (Top / Left side / Right side / Bottom).</summary>
+    private void SetMaterialOnSelectedFace(RoadSettings settings, string value)
+    {
+        switch (_cboFaceMaterial.SelectedIndex)
+        {
+            case 1: settings.LeftMaterial = value; break;
+            case 2: settings.RightMaterial = value; break;
+            case 3: settings.BottomMaterial = value; break;
+            default: settings.Material = value; break;
+        }
+    }
+
+    /// <summary>Swaps the material field to show the newly selected face's stored material
+    /// (a display-only change — no document edit, so no undo step).</summary>
+    private void ShowSelectedFaceMaterial()
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        _loading = true;
+        _txtMaterial.Text = MaterialOfSelectedFace(_doc.Settings);
+        _loading = false;
+    }
+
     private void ApplySettingsFromControls()
     {
         if (_loading)
@@ -3209,7 +3381,7 @@ public sealed partial class MainWindow : Form
         _undo.BeginChange();
         RoadSettings settings = _doc.Settings;
         settings.Power = (int)_cboPower.SelectedItem;
-        settings.Material = _txtMaterial.Text;
+        SetMaterialOnSelectedFace(settings, _txtMaterial.Text);
         settings.TextureScale = (double)_numTexScale.Value;
         settings.LightmapScale = (int)_cboLightmap.SelectedItem;
         settings.Snap = (int)_cboSnap.SelectedItem;
@@ -3474,7 +3646,8 @@ public sealed partial class MainWindow : Form
         _loading = true;
         RoadSettings settings = _doc.Settings;
         _cboPower.SelectedIndex = Math.Max(0, Array.IndexOf(new object[] { 2, 3, 4 }, settings.Power));
-        _txtMaterial.Text = settings.Material;
+        // Field shows the selected face's stored material (blank side/bottom = inherit top).
+        _txtMaterial.Text = MaterialOfSelectedFace(settings);
         _numTexScale.Value = (decimal)settings.TextureScale;
         _cboLightmap.SelectedIndex = LightmapIndex(settings.LightmapScale);
         _cboSnap.SelectedIndex = SnapIndex(settings.Snap);

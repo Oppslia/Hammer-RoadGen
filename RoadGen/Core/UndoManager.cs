@@ -135,7 +135,9 @@ public sealed class UndoManager
                 EdgeFeature b = second.EdgeFeatures[i];
                 if (a.Kind != b.Kind || a.LeftSide != b.LeftSide || a.Offset != b.Offset
                     || a.SolidBottom != b.SolidBottom || a.SolidInner != b.SolidInner
-                    || a.SolidOuter != b.SolidOuter || a.Material != b.Material)
+                    || a.SolidOuter != b.SolidOuter || a.Material != b.Material
+                    || a.InnerMaterial != b.InnerMaterial || a.OuterMaterial != b.OuterMaterial
+                    || a.BottomMaterial != b.BottomMaterial)
                 {
                     return false;
                 }
@@ -177,6 +179,9 @@ public sealed class UndoManager
         {
             return first.Power == second.Power
                 && first.Material == second.Material
+                && first.LeftMaterial == second.LeftMaterial
+                && first.RightMaterial == second.RightMaterial
+                && first.BottomMaterial == second.BottomMaterial
                 && first.SolidLeft == second.SolidLeft
                 && first.SolidRight == second.SolidRight
                 && first.SolidBottom == second.SolidBottom

@@ -84,6 +84,10 @@ public static class TrackFile
         public bool SolidInner { get; set; } = true;
         public bool SolidOuter { get; set; } = true;
         public string Material { get; set; } = "CONCRETE/CONCRETEFLOOR005A";
+        // Blank inner/outer/bottom overrides (absent in old files) mean "use the top".
+        public string InnerMaterial { get; set; } = "";
+        public string OuterMaterial { get; set; } = "";
+        public string BottomMaterial { get; set; } = "";
         public List<EdgeFeaturePointData> Points { get; set; } = new List<EdgeFeaturePointData>();
         // Null when every point is covered (files saved before per-point coverage
         // existed load as full coverage).
@@ -102,6 +106,10 @@ public static class TrackFile
     {
         public int Power { get; set; }
         public string Material { get; set; } = "CONCRETE/CONCRETEFLOOR005A";
+        // Blank side/bottom overrides (absent in old files) mean "use the top material".
+        public string LeftMaterial { get; set; } = "";
+        public string RightMaterial { get; set; } = "";
+        public string BottomMaterial { get; set; } = "";
         // Always present after migration; false is only a fallback for malformed files.
         public bool SolidLeft { get; set; }
         public bool SolidRight { get; set; }
@@ -164,6 +172,9 @@ public static class TrackFile
                 {
                     Power = track.Settings.Power,
                     Material = track.Settings.Material,
+                    LeftMaterial = track.Settings.LeftMaterial,
+                    RightMaterial = track.Settings.RightMaterial,
+                    BottomMaterial = track.Settings.BottomMaterial,
                     SolidLeft = track.Settings.SolidLeft,
                     SolidRight = track.Settings.SolidRight,
                     SolidBottom = track.Settings.SolidBottom,
@@ -221,7 +232,10 @@ public static class TrackFile
                     SolidBottom = feature.SolidBottom,
                     SolidInner = feature.SolidInner,
                     SolidOuter = feature.SolidOuter,
-                    Material = feature.Material
+                    Material = feature.Material,
+                    InnerMaterial = feature.InnerMaterial,
+                    OuterMaterial = feature.OuterMaterial,
+                    BottomMaterial = feature.BottomMaterial
                 };
 
                 foreach (EdgeFeaturePoint point in feature.Points)
@@ -317,7 +331,10 @@ public static class TrackFile
                             SolidBottom = featureData.SolidBottom,
                             SolidInner = featureData.SolidInner,
                             SolidOuter = featureData.SolidOuter,
-                            Material = string.IsNullOrWhiteSpace(featureData.Material) ? "CONCRETE/CONCRETEFLOOR005A" : featureData.Material
+                            Material = string.IsNullOrWhiteSpace(featureData.Material) ? "CONCRETE/CONCRETEFLOOR005A" : featureData.Material,
+                            InnerMaterial = featureData.InnerMaterial ?? "",
+                            OuterMaterial = featureData.OuterMaterial ?? "",
+                            BottomMaterial = featureData.BottomMaterial ?? ""
                         };
 
                         if (featureData.Points != null)
@@ -368,6 +385,10 @@ public static class TrackFile
 
         settings.Power = data.Power;
         settings.Material = string.IsNullOrWhiteSpace(data.Material) ? "CONCRETE/CONCRETEFLOOR005A" : data.Material;
+        // Blank side/bottom overrides inherit the top material.
+        settings.LeftMaterial = data.LeftMaterial ?? "";
+        settings.RightMaterial = data.RightMaterial ?? "";
+        settings.BottomMaterial = data.BottomMaterial ?? "";
         settings.SolidLeft = data.SolidLeft;
         settings.SolidRight = data.SolidRight;
         settings.SolidBottom = data.SolidBottom;

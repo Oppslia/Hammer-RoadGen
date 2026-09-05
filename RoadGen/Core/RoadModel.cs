@@ -31,8 +31,16 @@ public sealed class RoadSettings
     /// <summary>Displacement power (2, 3 or 4).</summary>
     public int Power = 3;
 
-    /// <summary>Material applied to every generated face.</summary>
+    /// <summary>Material on the road's TOP face (the historical single material).</summary>
     public string Material = "CONCRETE/CONCRETEFLOOR005A";
+
+    /// <summary>Optional per-face overrides. The left/right side walls and the bottom face
+    /// can each have their own material; blank (or whitespace) means the face inherits the
+    /// top <see cref="Material"/>, so existing tracks keep the old one-material look unless
+    /// a face is explicitly overridden.</summary>
+    public string LeftMaterial = "";
+    public string RightMaterial = "";
+    public string BottomMaterial = "";
 
     /// <summary>Draw/export the left side wall.</summary>
     public bool SolidLeft = true;
@@ -98,6 +106,11 @@ public sealed class RoadSettings
     public double EdgeIncCustomTopZ = 64;
     public double EdgeIncCustomBank = 4;
 
+    /// <summary>The material a face should use: its own override when one is set, otherwise
+    /// the top <see cref="Material"/> (sides/bottom inherit the top by default).</summary>
+    public string FaceMaterial(string faceOverride) =>
+        string.IsNullOrWhiteSpace(faceOverride) ? Material : faceOverride;
+
     /// <summary>Snap a value to the configured grid.</summary>
     public double Snapped(double value)
     {
@@ -116,6 +129,9 @@ public sealed class RoadSettings
         {
             Power = Power,
             Material = Material,
+            LeftMaterial = LeftMaterial,
+            RightMaterial = RightMaterial,
+            BottomMaterial = BottomMaterial,
             SolidLeft = SolidLeft,
             SolidRight = SolidRight,
             SolidBottom = SolidBottom,
@@ -195,6 +211,14 @@ public sealed class EdgeFeature
 
     public string Material = "CONCRETE/CONCRETEFLOOR005A";
 
+    /// <summary>Optional per-face materials: INNER (faces the road), OUTER (away from the
+    /// road) and BOTTOM can each have their own texture. Blank (or whitespace) means the
+    /// face inherits <see cref="Material"/> (the feature's top/surface material), so
+    /// existing features keep the single-material look unless a face is overridden.</summary>
+    public string InnerMaterial = "";
+    public string OuterMaterial = "";
+    public string BottomMaterial = "";
+
     /// <summary>One entry per road control point (width, bottom/top Z, bank). Keep
     /// in sync with the owning track's point count.</summary>
     public readonly List<EdgeFeaturePoint> Points = new List<EdgeFeaturePoint>();
@@ -262,6 +286,11 @@ public sealed class EdgeFeature
         };
     }
 
+    /// <summary>The material a face should use: its own override when one is set, otherwise
+    /// the feature's top <see cref="Material"/> (inner/outer/bottom inherit the top).</summary>
+    public string FaceMaterial(string faceOverride) =>
+        string.IsNullOrWhiteSpace(faceOverride) ? Material : faceOverride;
+
     public EdgeFeature Clone()
     {
         EdgeFeature copy = new EdgeFeature
@@ -272,7 +301,10 @@ public sealed class EdgeFeature
             SolidBottom = SolidBottom,
             SolidInner = SolidInner,
             SolidOuter = SolidOuter,
-            Material = Material
+            Material = Material,
+            InnerMaterial = InnerMaterial,
+            OuterMaterial = OuterMaterial,
+            BottomMaterial = BottomMaterial
         };
 
         foreach (EdgeFeaturePoint point in Points)
@@ -739,6 +771,59 @@ public sealed class RoadChain
         }
 
         return false;
+    }
+
+    /// <summary>The chain span owning the segment between chain points
+    /// <paramref name="segmentIndex"/> and <paramref name="segmentIndex"/> + 1 —
+    /// the same rule the road body uses to pick a segment's track settings, so a
+    /// merged sidewalk's per-track material boundary lands exactly where the road
+    /// body changes its own material. Returns null when no span owns the segment.</summary>
+    public ChainSpan SpanForSegment(int segmentIndex)
+    {
+        foreach (ChainSpan span in Spans)
+        {
+            if (segmentIndex >= span.StartPoint && segmentIndex < span.EndPoint - 1)
+            {
+                return span;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The track feature whose material a chain feature should use for the
+    /// segment between chain points <paramref name="segmentIndex"/> and
+    /// <paramref name="segmentIndex"/> + 1. Sidewalks that continue across welded
+    /// tracks merge into ONE chain feature so width/bank interpolate smoothly at
+    /// the junction, but each span is owned by a different track — and that track's
+    /// own feature (not the merged template, which is cloned from whichever track
+    /// started the strip) carries the material for its portion. Falls back to the
+    /// chain feature's template when no matching source feature exists on the
+    /// owning track.</summary>
+    public EdgeFeature FeatureAtSegment(ChainFeature chainFeature, int segmentIndex)
+    {
+        EdgeFeature template = chainFeature.Feature;
+        ChainSpan owner = SpanForSegment(segmentIndex);
+        if (owner == null || owner.Track == null)
+        {
+            return template;
+        }
+
+        foreach (EdgeFeature candidate in owner.Track.EdgeFeatures)
+        {
+            if (candidate.Kind != template.Kind)
+            {
+                continue;
+            }
+
+            bool effectiveLeft = candidate.LeftSide != owner.Reversed;
+            if (effectiveLeft == template.LeftSide)
+            {
+                return candidate;
+            }
+        }
+
+        return template;
     }
 
     /// <summary>The edge features of every track in this chain, resolved to the

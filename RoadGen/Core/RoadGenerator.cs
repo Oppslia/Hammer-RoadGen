@@ -166,9 +166,23 @@ public static class RoadGenerator
                 int resolution = 1 << power;
                 double maxSegment = Math.Max(1.0, segmentSettings.SegmentLength);
 
+                // Materials are per track too: a sidewalk that continues across welded
+                // tracks is one continuous chain feature (so width/bank interpolate at
+                // the junction), but each segment belongs to one span, so its surface
+                // and inner/outer/bottom materials come from THAT track's own feature —
+                // not the merged template, which is a clone of whichever track started
+                // the strip. Inner/outer still map onto the builder's walls by the
+                // feature's effective side, which is constant across the whole strip.
+                EdgeFeature materialFeature = chain.FeatureAtSegment(chainFeature, segmentIndex);
                 RoadSettings featureSettings = new RoadSettings
                 {
-                    Material = feature.Material,
+                    Material = materialFeature.Material,
+                    // Inner/outer/bottom overrides map onto the builder's left/right walls:
+                    // a left-side feature stores its columns outer-first (see SolidLeft below),
+                    // so its OUTER material rides on the builder's left wall and vice versa.
+                    LeftMaterial = feature.LeftSide ? materialFeature.OuterMaterial : materialFeature.InnerMaterial,
+                    RightMaterial = feature.LeftSide ? materialFeature.InnerMaterial : materialFeature.OuterMaterial,
+                    BottomMaterial = materialFeature.BottomMaterial,
                     TextureScale = segmentSettings.TextureScale,
                     FitTextures = segmentSettings.FitTextures,
                     LightmapScale = segmentSettings.LightmapScale,

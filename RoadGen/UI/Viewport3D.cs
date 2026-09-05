@@ -862,20 +862,22 @@ public sealed class Viewport3D : Control
                 // control-point segment, split like the exporter does by SegmentLength).
                 if (rs.FitTextures)
                 {
+                    // Top face uses rs.Material directly; walls pass their own material
+                    // (a blank override inherits the top via FaceMaterial).
                     DrawFittedPieces(road.Left, road.Right, arc, chain.Points, chain.Closed,
                         span.StartPoint, span.EndPoint - 1, 0, rs, steps);
                     if (rs.SolidLeft)
                     {
                         // Left wall: ribbon between the road's left top edge and its bottom.
                         DrawFittedPieces(road.Left, road.BottomLeft, arc, chain.Points, chain.Closed,
-                            span.StartPoint, span.EndPoint - 1, 0, rs, steps);
+                            span.StartPoint, span.EndPoint - 1, 0, rs, steps, rs.FaceMaterial(rs.LeftMaterial));
                     }
 
                     if (rs.SolidRight)
                     {
                         // Right wall: ribbon between the road's right top edge and its bottom.
                         DrawFittedPieces(road.Right, road.BottomRight, arc, chain.Points, chain.Closed,
-                            span.StartPoint, span.EndPoint - 1, 0, rs, steps);
+                            span.StartPoint, span.EndPoint - 1, 0, rs, steps, rs.FaceMaterial(rs.RightMaterial));
                     }
 
                     continue;
@@ -886,12 +888,16 @@ public sealed class Viewport3D : Control
                 FillTexturedStrip(road.Left, road.Right, arc, startIndex, endIndex, rs.Material, rs.TextureScale);
                 if (rs.SolidLeft)
                 {
-                    FillTexturedStrip(road.Left, road.BottomLeft, arc, startIndex, endIndex, rs.Material, rs.TextureScale);
+                    // Left wall: its own material when set, else it inherits the top.
+                    FillTexturedStrip(road.Left, road.BottomLeft, arc, startIndex, endIndex,
+                        rs.FaceMaterial(rs.LeftMaterial), rs.TextureScale);
                 }
 
                 if (rs.SolidRight)
                 {
-                    FillTexturedStrip(road.Right, road.BottomRight, arc, startIndex, endIndex, rs.Material, rs.TextureScale);
+                    // Right wall: its own material when set, else it inherits the top.
+                    FillTexturedStrip(road.Right, road.BottomRight, arc, startIndex, endIndex,
+                        rs.FaceMaterial(rs.RightMaterial), rs.TextureScale);
                 }
             }
         }
@@ -904,9 +910,6 @@ public sealed class Viewport3D : Control
                 continue;
             }
 
-            RoadSettings chainSettings = chain.Spans.Count > 0 ? chain.Spans[0].Track?.Settings : null;
-            double featureScale = chainSettings?.TextureScale ?? 0.25;
-            bool featureFit = chainSettings?.FitTextures ?? false;
             foreach (ChainFeature chainFeature in chain.CollectFeatures())
             {
                 EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, steps, chainFeature, chain.Closed);
@@ -917,46 +920,72 @@ public sealed class Viewport3D : Control
 
                 double[] arc = CumulativeAlong(mesh.InnerTop, mesh.OuterTop);
                 EdgeFeature edgeFeature = chainFeature.Feature;
-                string featureMaterial = edgeFeature.Material;
-                if (featureFit && chainSettings != null)
+                int featureStart = chainFeature.StartPoint;
+                int featureEnd = chainFeature.EndPoint;
+                int meshBaseSample = featureStart * steps;
+
+                // The feature's materials are per track: a sidewalk that continues across
+                // welded tracks merges into ONE chain feature so width/bank interpolate
+                // smoothly at the junction, but each span is owned by a different track and
+                // must use THAT track's own feature for its materials, exactly like the road
+                // body does. Split the mesh by span and draw each span's slice with its own
+                // track's source feature (surface + inner/outer/bottom overrides).
+                foreach (ChainSpan span in chain.Spans)
                 {
-                    // Fit mirrors the road: one texture per exported piece. The feature mesh
-                    // samples start at the feature's own chain index, so base the per-segment
-                    // split on the feature's start point (same segments the exporter writes,
-                    // clamped exactly like EdgePreviewMesh.Build clamps its own sample range).
-                    int featStart = Math.Clamp(chainFeature.StartPoint, 0, chain.Points.Count - 1);
-                    int featEnd = Math.Clamp(chainFeature.EndPoint, featStart + 1, chain.Points.Count);
-                    DrawFittedPieces(mesh.InnerTop, mesh.OuterTop, arc, chain.Points, chain.Closed,
-                        featStart, featEnd - 1, featStart * steps, chainSettings, steps);
+                    int lo = Math.Max(span.StartPoint, featureStart);
+                    int hi = Math.Min(span.EndPoint - 1, featureEnd - 1);
+                    if (lo >= hi || span.Track?.Settings == null)
+                    {
+                        continue;
+                    }
+
+                    EdgeFeature source = chain.FeatureAtSegment(chainFeature, lo);
+                    RoadSettings spanSettings = span.Track.Settings;
+
+                    if (spanSettings.FitTextures)
+                    {
+                        // Fit mirrors the road: one texture per exported piece. The feature
+                        // mesh samples start at the feature's own chain index, so base the
+                        // per-segment split on the feature's start point (same segments the
+                        // exporter writes, clamped like EdgePreviewMesh.Build clamps them).
+                        DrawFittedPieces(mesh.InnerTop, mesh.OuterTop, arc, chain.Points, chain.Closed,
+                            lo, hi, meshBaseSample, spanSettings, steps, source.Material);
+                        if (edgeFeature.SolidInner)
+                        {
+                            // Inner face (faces the road): between the strip's inner top and base.
+                            DrawFittedPieces(mesh.InnerTop, mesh.InnerBase, arc, chain.Points, chain.Closed,
+                                lo, hi, meshBaseSample, spanSettings, steps,
+                                source.FaceMaterial(source.InnerMaterial));
+                        }
+
+                        if (edgeFeature.SolidOuter)
+                        {
+                            // Outer face (away from the road): between the strip's outer top and base.
+                            DrawFittedPieces(mesh.OuterTop, mesh.OuterBase, arc, chain.Points, chain.Closed,
+                                lo, hi, meshBaseSample, spanSettings, steps,
+                                source.FaceMaterial(source.OuterMaterial));
+                        }
+
+                        continue;
+                    }
+
+                    int s0 = (lo - featureStart) * steps;
+                    int s1 = (hi - featureStart) * steps;
+                    double scale = spanSettings.TextureScale;
+                    FillTexturedStrip(mesh.InnerTop, mesh.OuterTop, arc, s0, s1, source.Material, scale);
                     if (edgeFeature.SolidInner)
                     {
-                        // Inner face (faces the road): between the strip's inner top and base.
-                        DrawFittedPieces(mesh.InnerTop, mesh.InnerBase, arc, chain.Points, chain.Closed,
-                            featStart, featEnd - 1, featStart * steps, chainSettings, steps);
+                        // Inner wall: its own material when set, else it inherits the top.
+                        FillTexturedStrip(mesh.InnerTop, mesh.InnerBase, arc, s0, s1,
+                            source.FaceMaterial(source.InnerMaterial), scale);
                     }
 
                     if (edgeFeature.SolidOuter)
                     {
-                        // Outer face (away from the road): between the strip's outer top and base.
-                        DrawFittedPieces(mesh.OuterTop, mesh.OuterBase, arc, chain.Points, chain.Closed,
-                            featStart, featEnd - 1, featStart * steps, chainSettings, steps);
+                        // Outer wall: its own material when set, else it inherits the top.
+                        FillTexturedStrip(mesh.OuterTop, mesh.OuterBase, arc, s0, s1,
+                            source.FaceMaterial(source.OuterMaterial), scale);
                     }
-
-                    continue;
-                }
-
-                FillTexturedStrip(mesh.InnerTop, mesh.OuterTop, arc, 0, mesh.InnerTop.Count - 1,
-                    featureMaterial, featureScale);
-                if (edgeFeature.SolidInner)
-                {
-                    FillTexturedStrip(mesh.InnerTop, mesh.InnerBase, arc, 0, mesh.InnerTop.Count - 1,
-                        featureMaterial, featureScale);
-                }
-
-                if (edgeFeature.SolidOuter)
-                {
-                    FillTexturedStrip(mesh.OuterTop, mesh.OuterBase, arc, 0, mesh.InnerTop.Count - 1,
-                        featureMaterial, featureScale);
                 }
             }
         }
@@ -1039,8 +1068,10 @@ public sealed class Viewport3D : Control
     /// <c>baseSampleIndex + k</c> (0 for the road mesh, which is sampled from the chain start).</summary>
     private void DrawFittedPieces(IReadOnlyList<Vec3> inner, IReadOnlyList<Vec3> outer, double[] arc,
         IReadOnlyList<RoadPoint> chainPoints, bool closed, int segStart, int segEnd,
-        int baseSampleIndex, RoadSettings settings, int steps)
+        int baseSampleIndex, RoadSettings settings, int steps, string material = null)
     {
+        // material == null → the settings' top material (road top face / edge features).
+        string use = material ?? settings.Material;
         int maxSeg = chainPoints.Count - 1;
         double maxSegment = Math.Max(1.0, settings.SegmentLength);
         for (int seg = segStart; seg < segEnd && seg < maxSeg; seg++)
@@ -1056,7 +1087,7 @@ public sealed class Viewport3D : Control
                     s1 = s0 + 1;
                 }
 
-                FillFittedPiece(inner, outer, arc, s0, s1, settings.Material);
+                FillFittedPiece(inner, outer, arc, s0, s1, use);
             }
         }
     }

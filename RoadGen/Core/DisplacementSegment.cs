@@ -88,9 +88,11 @@ public static class DisplacementSegment
         // The side walls are displacements too, so their top edges follow the road's
         // displaced edges. Left/right/bottom are independently optional. The
         // front/back faces are internal seams and stay nodraw.
-        string bottomMaterial = s.SolidBottom ? s.Material : "TOOLS/TOOLSNODRAW";
-        string leftMaterial = s.SolidLeft ? s.Material : "TOOLS/TOOLSNODRAW";
-        string rightMaterial = s.SolidRight ? s.Material : "TOOLS/TOOLSNODRAW";
+        // Each wall/bottom face uses its own material when one is set, otherwise it inherits
+        // the top material (FaceMaterial resolves a blank override to the top).
+        string bottomMaterial = s.SolidBottom ? s.FaceMaterial(s.BottomMaterial) : "TOOLS/TOOLSNODRAW";
+        string leftMaterial = s.SolidLeft ? s.FaceMaterial(s.LeftMaterial) : "TOOLS/TOOLSNODRAW";
+        string rightMaterial = s.SolidRight ? s.FaceMaterial(s.RightMaterial) : "TOOLS/TOOLSNODRAW";
 
         // Face 2: bottom, displaced to mirror the top surface shifted straight down.
         // Plane points (B2, A2, D2) keep the same winding as the other faces so the
