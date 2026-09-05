@@ -29,6 +29,68 @@ public sealed class VtfMaterialCache
         new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
     private Bitmap _water;
 
+    // Hammer's material browser skips any .vmt whose path starts with a CONFIGURED exclusion
+    // directory (CMaterial::ShouldSkipMaterial checks g_pGameConfig->m_MaterialExclusions,
+    // the per-game list in GameConfig.txt, AND pGD->m_FGDMaterialExclusions, the @MaterialExclusion
+    // block in each loaded .fgd — both are case-insensitive prefix matches on the material name).
+    // Stock TF2 ships ZERO gameconfig exclusions but a big @MaterialExclusion block in tf.fgd,
+    // which is what actually hides backpack/, models/, sprites/, vgui/, etc. from the face
+    // browser. This default is the verbatim tf.fgd list, kept as the fallback when no FGDs are
+    // discoverable on a machine; at startup MainWindow runs FgdDiscovery (which finds every
+    // installed game's bin\GameConfig.txt + FGDs exactly as Hammer does) and replaces this
+    // list with the union of all discovered @MaterialExclusion blocks via SetMaterialExclusions.
+    public static readonly string[] DefaultMaterialExclusions =
+    {
+        "ambulance", "backpack", "cable", "console", "cp_bloodstained", "customcubemaps",
+        "detail", "debug", "effects", "engine", "environment maps", "halflife",
+        "matsys_regressiontest", "hlmv", "hud", "logo", "maps", "models", "overviews",
+        "particle", "particles", "perftest", "pl_halfacre", "pl_hoodoo", "scripted",
+        "shadertest", "sprites", "sun", "vgui", "voice"
+    };
+
+    private readonly List<string> _materialExclusions;
+
+    public VtfMaterialCache()
+    {
+        _materialExclusions = new List<string>(DefaultMaterialExclusions);
+    }
+
+    /// <summary>The currently active exclusion directories (prefix-matched against material
+    /// names by the browser). Mirror of Hammer's per-game material exclusions.</summary>
+    public IReadOnlyList<string> MaterialExclusions => _materialExclusions;
+
+    /// <summary>Replaces the material-exclusion directory list (Hammer users edit this per
+    /// game; RoadGen exposes it so hosts can match their Hammer config).</summary>
+    public void SetMaterialExclusions(IEnumerable<string> directories)
+    {
+        _materialExclusions.Clear();
+        if (directories != null)
+        {
+            foreach (string dir in directories)
+            {
+                string normalized = dir?.Trim().Trim('/').Trim('\\') ?? "";
+                if (normalized.Length > 0)
+                {
+                    _materialExclusions.Add(normalized);
+                }
+            }
+        }
+    }
+
+    private bool IsExcludedMaterial(string name)
+    {
+        foreach (string dir in _materialExclusions)
+        {
+            if (name.StartsWith(dir + "/", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, dir, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Mounted content folders in search order. Higher-priority content (a game's own
     /// "tf") is searched before shared content ("hl2"), like Hammer's mounted search paths.</summary>
     public IReadOnlyList<ContentMount> Mounts => _mounts;
@@ -181,6 +243,106 @@ public sealed class VtfMaterialCache
     /// <summary>The missing-material log: material path -> why it could not be loaded.
     /// Intended for a missing-materials report (and as groundwork for a material browser).</summary>
     public IReadOnlyDictionary<string, string> MissingMaterials => _missing;
+
+    /// <summary>Normalizes any material reference (a VMF face material, a typed value, or a
+    /// content-relative key) into the canonical browser name: backslashes to forward slashes,
+    /// a leading "materials/" stripped, and any ".vmt"/".vtf" extension dropped.
+    /// "materials\\CONCRETE\\a.vmt", "materials/concrete/a.vmt" and "concrete/a" all give
+    /// "concrete/a".</summary>
+    public static string NormalizeMaterialName(string material)
+    {
+        if (string.IsNullOrWhiteSpace(material))
+        {
+            return "";
+        }
+
+        string m = material.Trim().Replace('\\', '/');
+        const string prefix = "materials/";
+        if (m.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            m = m.Substring(prefix.Length);
+        }
+
+        if (m.EndsWith(".vmt", StringComparison.OrdinalIgnoreCase))
+        {
+            m = m.Substring(0, m.Length - 4);
+        }
+        else if (m.EndsWith(".vtf", StringComparison.OrdinalIgnoreCase))
+        {
+            m = m.Substring(0, m.Length - 4);
+        }
+
+        return m.TrimStart('/');
+    }
+
+    /// <summary>All materials the mounts can serve, as canonical browser names
+    /// ("folder/name", no extension). Walks each mount's content-relative file keys and keeps
+    /// only ".vmt" files under "materials/", so a lone ".vtf" with no matching material is
+    /// never listed — exactly how Hammer browses materials (a .vmt is what makes a material).
+    /// Materials under an excluded directory (see <see cref="MaterialExclusions"/>) are
+    /// skipped, mirroring Hammer's per-game exclusion list. Higher-priority mounts (a game's
+    /// own folder before shared "hl2") win on duplicates. Result is sorted by name for the
+    /// browser grid.</summary>
+    public List<string> EnumerateMaterialNames()
+    {
+        var names = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        const string prefix = "materials/";
+
+        foreach (ContentMount mount in _mounts)
+        {
+            foreach (string key in mount.EnumerateFileKeys())
+            {
+                if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    && key.EndsWith(".vmt", StringComparison.OrdinalIgnoreCase))
+                {
+                    string name = NormalizeMaterialName(key);
+                    if (name.Length > 0 && !IsExcludedMaterial(name) && seen.Add(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+        }
+
+        names.Sort(StringComparer.OrdinalIgnoreCase);
+        return names;
+    }
+
+    /// <summary>Opens a material's source .vmt on disk in its default app, mirroring Hammer's
+    /// "Open Source" (CTextureSystem::OpenSource resolves "materials/&lt;name&gt;.vmt" to a
+    /// local path and ShellExecutes it). The mounts are searched in priority order for a LOOSE
+    /// copy; a material that only exists inside a VPK has no local file and returns false
+    /// (nothing is opened, matching Hammer).</summary>
+    public bool TryOpenMaterialSource(string materialPath)
+    {
+        string name = NormalizeMaterialName(materialPath);
+        if (name.Length == 0)
+        {
+            return false;
+        }
+
+        string relative = "materials/" + name + ".vmt";
+        foreach (ContentMount mount in _mounts)
+        {
+            if (!mount.TryGetLooseFilePath(relative, out string fullPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(fullPath) { UseShellExecute = true });
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Gets (and caches) the texture for a material path. Never returns null —
     /// falls back to a checkerboard and records the miss (with a reason) once.</summary>

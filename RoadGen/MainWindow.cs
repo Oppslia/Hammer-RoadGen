@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 using RoadGen.Core;
+using RoadGen.Core.Vtf;
 using RoadGen.UI;
 using static RoadGen.MainWindowHelpers;
 
@@ -63,6 +64,15 @@ public sealed partial class MainWindow : Form
     private bool _layoutBoundsKnown;
     private Vec3 _layoutMins;
     private Vec3 _layoutMaxs;
+
+    // The currently imported layout world. Kept so the material browser's "Only used
+    // textures" filter can list the materials this map actually references.
+    private VmfWorld _layoutWorld;
+
+    // Material browser: a "…" browse button next to each material field. The fields are
+    // read-only and open the browser when clicked, mirroring the Hammer material picker.
+    private readonly Button _btnBrowseMaterial = new Button();
+    private readonly Button _btnBrowseFeatureMaterial = new Button();
 
     private readonly Viewport3D _v3d = new Viewport3D();
     private readonly Viewport2D _top = new Viewport2D();
@@ -187,7 +197,18 @@ public sealed partial class MainWindow : Form
         // Mount every installed Source content folder (loose files + *_dir.vpk), including
         // VPK-only shared content like TF2's "hl2" — this is what makes shared textures resolve.
         _v3d.MaterialCache.SetContentRoots(GamePaths.AllInstalledContentFolders());
-        WriteDiscoveryReport(GamePaths.DiscoveryReport());
+        // Build the material-browser exclusion table from every installed game's FGDs: locate
+        // each game's bin\GameConfig.txt the way Hammer does, load all the FGDs it names
+        // (GameData0..N, following @include), and union their @MaterialExclusion blocks plus
+        // each Hammer block's -MaterialExcludeDirN. Falls back to the shipped tf.fgd-derived
+        // default list when no FGDs are discoverable.
+        List<string> fgdExclusions = FgdDiscovery.DiscoverMaterialExclusions();
+        if (fgdExclusions.Count > 0)
+        {
+            _v3d.MaterialCache.SetMaterialExclusions(fgdExclusions);
+        }
+
+        WriteDiscoveryReport(GamePaths.DiscoveryReport() + "\n\n" + FgdDiscovery.DiscoveryReport());
         _v3d.MaterialCache.MissingMaterialFound += OnMissingMaterialFound;
         _missingReportTimer = new System.Windows.Forms.Timer { Interval = 500 };
         _missingReportTimer.Tick += OnMissingReportTick;
@@ -557,8 +578,11 @@ public sealed partial class MainWindow : Form
 
         _txtMaterial.Text = _doc.Settings.Material;
 
+        // Material field + its "…" browse button (clicking either opens the material browser).
+        Control materialFieldHost = MakeMaterialFieldHost(_txtMaterial, _btnBrowseMaterial);
+
         AddSettingRow(roadSettingsInputs, 0, "Power", _cboPower);
-        AddSettingRow(roadSettingsInputs, 1, "Material", _txtMaterial);
+        AddSettingRow(roadSettingsInputs, 1, "Material", materialFieldHost);
         AddSettingRow(roadSettingsInputs, 2, "Texture scale", _numTexScale);
         _numTexScale.Increment = 0.25m;
         AddSettingRow(roadSettingsInputs, 3, "Lightmap scale", _cboLightmap);
@@ -752,7 +776,9 @@ public sealed partial class MainWindow : Form
 
         AddFeatureSettingRow(featureInputs, 6, "Bank", _numFeatureBank, BuildFeatureIncrementCell(_chkFeatureIncBank, _numFeatureIncBank, followGrid: false, customValue: 4m));
 
-        AddFeatureSettingRow(featureInputs, 7, "Material", _txtFeatureMaterial, null);
+        // Feature material field + its "…" browse button (clicking either opens the browser).
+        Control featureMaterialFieldHost = MakeMaterialFieldHost(_txtFeatureMaterial, _btnBrowseFeatureMaterial);
+        AddFeatureSettingRow(featureInputs, 7, "Material", featureMaterialFieldHost, null);
 
         _numFeatureOffset.Minimum = -100000;
         _numFeatureBottomZ.Minimum = -100000;
@@ -932,6 +958,7 @@ public sealed partial class MainWindow : Form
     /// in the 2D views (or explicitly fits).</summary>
     private void SetLayoutWorld(VmfWorld world)
     {
+        _layoutWorld = world;
         _v3d.SetReferenceWorld(world);
         _top.SetReferenceWorld(world);
         _front.SetReferenceWorld(world);
@@ -941,6 +968,92 @@ public sealed partial class MainWindow : Form
         _layoutBoundsKnown = true;
 
         InvalidateAll();
+    }
+
+    /// <summary>Builds the host for a material field: the read-only text field (click opens
+    /// the material browser) with a "…" browse button docked on its right. Both the field and
+    /// the button open <see cref="BrowseMaterial"/>.</summary>
+    private Control MakeMaterialFieldHost(TextBox field, Button browse)
+    {
+        browse.Text = "\u2026";
+        browse.Dock = DockStyle.Right;
+        browse.Width = 24;
+        browse.Margin = new Padding(0);
+        browse.FlatStyle = FlatStyle.System;
+        browse.Click += (s, e) => BrowseMaterial(field);
+
+        field.ReadOnly = true;
+        field.Click += (s, e) => BrowseMaterial(field);
+        field.KeyDown += (s, e) =>
+        {
+            if (e.KeyCode == Keys.Enter)
+            {
+                e.SuppressKeyPress = true;
+                BrowseMaterial(field);
+            }
+        };
+
+        // Docking fills in reverse z-order: the fill field is added first, the right-docked
+        // browse button last so it sits at the right edge.
+        Panel host = new Panel { Dock = DockStyle.Fill };
+        field.Dock = DockStyle.Fill;
+        host.Controls.Add(field);
+        host.Controls.Add(browse);
+        return host;
+    }
+
+    /// <summary>Opens the material browser pre-set to the field's current material. On a pick,
+    /// the field text is replaced — the existing TextChanged handlers then push the value into
+    /// the road settings / selected edge feature, so it behaves exactly like typing it.</summary>
+    private void BrowseMaterial(TextBox field)
+    {
+        HashSet<string> used = CollectLayoutMaterials();
+        using (MaterialBrowserDialog dlg = new MaterialBrowserDialog(_v3d.MaterialCache, field.Text, used))
+        {
+            if (dlg.ShowDialog(this) == DialogResult.OK && dlg.SelectedMaterial.Length > 0)
+            {
+                if (!string.Equals(field.Text, dlg.SelectedMaterial, StringComparison.OrdinalIgnoreCase))
+                {
+                    field.Text = dlg.SelectedMaterial;
+                }
+            }
+        }
+    }
+
+    /// <summary>The normalized materials the imported layout references (brush + displacement
+    /// face materials), used by the browser's "Only used textures" filter. Empty when no
+    /// layout is loaded.</summary>
+    private HashSet<string> CollectLayoutMaterials()
+    {
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        VmfWorld world = _layoutWorld;
+        if (world == null)
+        {
+            return used;
+        }
+
+        foreach (VmfBrush brush in world.Brushes)
+        {
+            foreach (VmfFace face in brush.Faces)
+            {
+                string name = VtfMaterialCache.NormalizeMaterialName(face.Material);
+                if (name.Length > 0)
+                {
+                    used.Add(name);
+                }
+            }
+        }
+
+        foreach (VmfDisplacement displacement in world.Displacements)
+        {
+            string name = VtfMaterialCache.NormalizeMaterialName(displacement.Material);
+            if (name.Length > 0)
+            {
+                used.Add(name);
+            }
+        }
+
+        return used;
     }
 
     private bool TryGetTrackBounds(out Vec3 mins, out Vec3 maxs)
@@ -2090,6 +2203,7 @@ public sealed partial class MainWindow : Form
         _numFeatureTopZ.Enabled = enabled;
         _numFeatureBank.Enabled = enabled;
         _txtFeatureMaterial.Enabled = enabled;
+        _btnBrowseFeatureMaterial.Enabled = enabled;
         _chkFeatureBottom.Enabled = enabled;
         _chkFeatureInner.Enabled = enabled;
         _chkFeatureOuter.Enabled = enabled;

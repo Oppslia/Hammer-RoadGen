@@ -159,6 +159,28 @@ public sealed class ContentMount : IDisposable
         return null;
     }
 
+    /// <summary>Resolves a content-relative path to a real on-disk file path only when this
+    /// mount serves it as a LOOSE file. A VPK entry never has a local path — which is exactly
+    /// why Hammer's "Open Source" works only for files that exist on disk. Returns false when
+    /// only an archive copy exists or the file is absent.</summary>
+    public bool TryGetLooseFilePath(string contentRelativePath, out string fullPath)
+    {
+        fullPath = null;
+        if (string.IsNullOrWhiteSpace(contentRelativePath) || !Directory.Exists(_contentPath))
+        {
+            return false;
+        }
+
+        string disk = Path.Combine(_contentPath, contentRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(disk))
+        {
+            return false;
+        }
+
+        fullPath = disk;
+        return true;
+    }
+
     /// <summary>All content-relative file keys available in this mount: loose files under the
     /// content folder first, then every VPK's entries. This is the seam a material browser
     /// walks to list what a content folder can serve (filter to "materials/" + ".vmt"/".vtf").</summary>

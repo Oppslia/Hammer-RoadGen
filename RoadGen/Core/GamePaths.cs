@@ -565,6 +565,33 @@ public static class GamePaths
         return folders;
     }
 
+    /// <summary>Every game install directory under every Steam library's "common" folder —
+    /// the same crawl the content mounts use. Each Source game keeps its FGD files and the
+    /// Hammer GameConfig.txt that references them under <c>&lt;game&gt;\bin</c>, so FGD
+    /// discovery (see <see cref="FgdDiscovery"/>) walks this list to locate them.</summary>
+    public static List<string> AllInstalledGameDirectories()
+    {
+        var dirs = new List<string>();
+        foreach (string steamApps in FindSteamAppsFolders())
+        {
+            string common = Path.Combine(steamApps, "common");
+            if (!Directory.Exists(common))
+            {
+                continue;
+            }
+
+            foreach (string gameDir in Directory.GetDirectories(common))
+            {
+                if (!ContainsPath(dirs, gameDir))
+                {
+                    dirs.Add(gameDir);
+                }
+            }
+        }
+
+        return dirs;
+    }
+
     /// <summary>True when a content folder exists and can serve materials: it has a loose
     /// "materials" folder and/or at least one "*_dir.vpk" archive (whose keys are
     /// content-relative, so its packed materials belong to this content folder).</summary>

@@ -36,7 +36,9 @@ public sealed partial class MainWindow
 
         // ---- Road settings ----
         _tooltipManager.Attach(_cboPower, "Displacement power (higher = denser grid)");
-        _tooltipManager.Attach(_txtMaterial, "Material applied to every generated face");
+        _tooltipManager.Attach(_txtMaterial, "Material applied to every generated face — click or use … to browse installed game materials");
+        _tooltipManager.Attach(_btnBrowseMaterial, "Browse installed game materials");
+        _tooltipManager.Attach(_btnBrowseFeatureMaterial, "Browse installed game materials for this strip");
         _tooltipManager.Attach(_numTexScale, "Texture scale written to the displacement face");
         _tooltipManager.Attach(_cboLightmap, "Lightmap scale for every face");
         _tooltipManager.Attach(_cboSnap, "Grid snap interval (HU)");
