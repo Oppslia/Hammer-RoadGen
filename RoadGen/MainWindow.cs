@@ -31,21 +31,10 @@ public sealed partial class MainWindow : Form
         CheckOnClick = true,
         Checked = true
     };
-    private readonly ToolStripButton _btnTextures = new ToolStripButton("Textures")
-    {
-        CheckOnClick = true,
-        Checked = false
-    };
-    private readonly ToolStripButton _btnLayoutGrid = new ToolStripButton("Layout grid")
-    {
-        CheckOnClick = true,
-        Checked = true
-    };
-    private readonly ToolStripButton _btnHideTools = new ToolStripButton("Hide tools")
-    {
-        CheckOnClick = true,
-        Checked = true
-    };
+    private readonly CheckBox _btnTextures = new CheckBox { Text = "Textures", Checked = false };
+    private readonly CheckBox _btnLayoutGrid = new CheckBox { Text = "Layout grid", Checked = true };
+    private readonly CheckBox _btnHideTools = new CheckBox { Text = "Hide tools", Checked = true };
+    private readonly CheckBox _chkRoadTextures = new CheckBox { Text = "Preview road textures", Checked = false };
     private readonly ToolStripStatusLabel _statusMounted = new ToolStripStatusLabel();
     private bool _syncingGrid;
 
@@ -57,6 +46,10 @@ public sealed partial class MainWindow : Form
     private readonly CheckBox _chkCordonActive = new CheckBox();
     private readonly Button _btnCordonFit = new Button();
     private readonly Label _lblCordonBounds = new Label();
+
+    // Guards the cordon Active checkbox against recording undo steps while it is being
+    // re-synced after an undo/redo restores the cordon state.
+    private bool _syncingCordon;
 
     // Bounds of the imported layout, used to seed the cordon on import and by "Fit".
     private bool _layoutBoundsKnown;
@@ -184,7 +177,9 @@ public sealed partial class MainWindow : Form
 
     public MainWindow()
     {
-        _undo = new UndoManager(_doc);
+        // The cordon is handed to the undo manager so Active / Fit-to-map / box edits share
+        // the same undo/redo history as road edits.
+        _undo = new UndoManager(_doc, _cordon);
 
         Text = "RoadGen - 3D Displacement Road Generator";
         Size = new Size(1360, 860);
@@ -280,16 +275,8 @@ public sealed partial class MainWindow : Form
         topActionBar.Items.Add(new ToolStripLabel("Grid:"));
         topActionBar.Items.Add(_gridCombo);
 
-        // Reference-world texturing toggle. Installed Source games are auto-mounted from the
-        // Steam libraries, so no game directory picker or game selector is needed.
-        topActionBar.Items.Add(new ToolStripSeparator());
-        topActionBar.Items.Add(_btnTextures);
-        // Layout grid overlay toggle: shows/hides the imported layout's wireframe grid so the
-        // textured layout can be viewed on its own.
-        topActionBar.Items.Add(_btnLayoutGrid);
-        // Tool-texture filter: hides imported faces whose material is a Source tool texture
-        // (tools/* such as clip/skip/areaportal) so only real geometry shows. On by default.
-        topActionBar.Items.Add(_btnHideTools);
+        // Reference-world texturing / layout grid / hide-tools toggles moved out of the top
+        // bar into the side panel's "Display" section (see BuildSidePanel).
 
         topActionBar.Items.Add(new ToolStripSeparator());
         _btnUndo = ToolButton("Undo", (s, e) => DoUndo());
@@ -387,13 +374,13 @@ public sealed partial class MainWindow : Form
     {
         Panel sidePanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(38, 38, 42), Padding = new Padding(8) };
 
-        // ── Control Points section ──
+        // ── Track Controls section ──
         // The whole per-track editor (track list, point table, editors + increments,
         // Solid Roads + joining, road settings) lives in one group with a normal
         // group-box header.
         GroupBox trackSection = new GroupBox
         {
-            Text = "Control Points",
+            Text = "Track Controls",
             Dock = DockStyle.Top,
             Height = 640,
             Padding = new Padding(6),
@@ -513,8 +500,8 @@ public sealed partial class MainWindow : Form
             RowCount = 6,
             Padding = new Padding(0, 6, 0, 0)
         };
-        controlPointEditorRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        controlPointEditorRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        controlPointEditorRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
+        controlPointEditorRows.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
         controlPointEditorRows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int r = 0; r < 6; r++)
         {
@@ -629,13 +616,13 @@ public sealed partial class MainWindow : Form
         propertiesColumn.Controls.Add(controlPointEditorRows);
         propertiesColumn.Controls.Add(roadSettingsInputs);
 
-        // "Track controls" box: Add Point / Remove Point, top-aligned (no vertical centering)
+        // "Point Controls" box: Add Point / Remove Point, top-aligned (no vertical centering)
         // but centered horizontally as a fixed-width pair (two flexible columns around it).
         GroupBox trackControlsSection = new GroupBox
         {
-            Text = "Track controls",
-            Dock = DockStyle.Left,
-            Width = 110,
+            Text = "Point Controls",
+            Dock = DockStyle.Top,
+            Height = 92,
             Padding = new Padding(4, 2, 4, 4),
             ForeColor = Color.LightGray
         };
@@ -677,15 +664,27 @@ public sealed partial class MainWindow : Form
         trackControlsCenter.Controls.Add(trackControlsButtons, 1, 0);
         trackControlsSection.Controls.Add(trackControlsCenter);
 
+        // Left column stacks the "Point Controls" box (Add/Remove) with the Cordon box right
+        // under it. The cordon box keeps its full 178 px height and its width (the column is
+        // wider than the original 135, so it never shrinks).
+        GroupBox cordonSection = BuildCordonSection();
+        Panel trackLeftColumn = new Panel
+        {
+            Dock = DockStyle.Left,
+            Width = 128,
+            Padding = new Padding(0, 0, 4, 0)
+        };
+        trackLeftColumn.Controls.Add(cordonSection);
+        trackLeftColumn.Controls.Add(trackControlsSection);
+
         Panel bottomColumns = new Panel
         {
             Dock = DockStyle.Bottom,
             Height = 300,
             Padding = new Padding(0)
         };
-        
-        bottomColumns.Controls.Add(propertiesColumn);     // Fill (processed last, fills the rest)
-        bottomColumns.Controls.Add(trackControlsSection); // Left (processed first, left edge)
+        bottomColumns.Controls.Add(propertiesColumn);   // Fill (processed last, fills the rest)
+        bottomColumns.Controls.Add(trackLeftColumn);    // Left (processed first, left edge)
 
         // Point table + Solid Roads, full width, above the bottom columns.
         Panel pointTableArea = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0) };
@@ -812,8 +811,8 @@ public sealed partial class MainWindow : Form
             RowCount = 8,
             Padding = new Padding(0)
         };
-        featureInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        featureInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        featureInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
+        featureInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
         featureInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int r = 0; r < 8; r++)
         {
@@ -828,22 +827,18 @@ public sealed partial class MainWindow : Form
         _cboFeatureSide.DropDownStyle = ComboBoxStyle.DropDownList;
         _cboFeatureSide.SelectedIndex = 0;
 
-        AddFeatureSettingRow(featureInputs, 0, "Kind", _cboFeatureKind, null);
-        AddFeatureSettingRow(featureInputs, 1, "Side", _cboFeatureSide, null);
-
-        AddFeatureSettingRow(featureInputs, 2, "Offset", _numFeatureOffset, BuildFeatureIncrementCell(_chkFeatureIncOffset, _numFeatureIncOffset, followGrid: true, customValue: 64m));
-
-        AddFeatureSettingRow(featureInputs, 3, "Width", _numFeatureWidth, BuildFeatureIncrementCell(_chkFeatureIncWidth, _numFeatureIncWidth, followGrid: true, customValue: 64m));
-
-        AddFeatureSettingRow(featureInputs, 4, "Bottom Z", _numFeatureBottomZ, BuildFeatureIncrementCell(_chkFeatureIncBottomZ, _numFeatureIncBottomZ, followGrid: true, customValue: 64m));
-
-        AddFeatureSettingRow(featureInputs, 5, "Top Z", _numFeatureTopZ, BuildFeatureIncrementCell(_chkFeatureIncTopZ, _numFeatureIncTopZ, followGrid: true, customValue: 64m));
-
-        AddFeatureSettingRow(featureInputs, 6, "Bank", _numFeatureBank, BuildFeatureIncrementCell(_chkFeatureIncBank, _numFeatureIncBank, followGrid: false, customValue: 4m));
-
         // Feature material field + its "…" browse button (clicking either opens the browser).
         Control featureMaterialFieldHost = MakeMaterialFieldHost(_txtFeatureMaterial, _btnBrowseFeatureMaterial);
-        AddFeatureSettingRow(featureInputs, 7, "Material", featureMaterialFieldHost, null);
+
+  
+        AddFeatureSettingRow(featureInputs, 0, "Kind", _cboFeatureKind, null);
+        AddFeatureSettingRow(featureInputs, 1, "Side", _cboFeatureSide, null);
+        AddFeatureSettingRow(featureInputs, 2, "Material", featureMaterialFieldHost, null);
+        AddFeatureSettingRow(featureInputs, 3, "Offset", _numFeatureOffset, BuildFeatureIncrementCell(_chkFeatureIncOffset, _numFeatureIncOffset, followGrid: true, customValue: 64m));
+        AddFeatureSettingRow(featureInputs, 4, "Width", _numFeatureWidth, BuildFeatureIncrementCell(_chkFeatureIncWidth, _numFeatureIncWidth, followGrid: true, customValue: 64m));
+        AddFeatureSettingRow(featureInputs, 5, "Bank", _numFeatureBank, BuildFeatureIncrementCell(_chkFeatureIncBank, _numFeatureIncBank, followGrid: false, customValue: 4m));
+        AddFeatureSettingRow(featureInputs, 6, "Top Z", _numFeatureTopZ, BuildFeatureIncrementCell(_chkFeatureIncTopZ, _numFeatureIncTopZ, followGrid: true, customValue: 64m));
+        AddFeatureSettingRow(featureInputs, 7, "Bottom Z", _numFeatureBottomZ, BuildFeatureIncrementCell(_chkFeatureIncBottomZ, _numFeatureIncBottomZ, followGrid: true, customValue: 64m));
 
         _numFeatureOffset.Minimum = -100000;
         _numFeatureBottomZ.Minimum = -100000;
@@ -855,27 +850,51 @@ public sealed partial class MainWindow : Form
         edgeFeaturesSection.Controls.Add(featureFaceToggleRow);
         edgeFeaturesSection.Controls.Add(featureInputs);
 
-        // Cordon section: a 135 px column docked to the LEFT of the Edge Features group. The
-        // edge-features group is docked Fill inside a shared host, so it gives up ~135 px of
-        // width and the cordon controls (edit / active / fit + bounds read-out) take that
-        // column.
-        GroupBox cordonSection = BuildCordonSection();
-        Panel cordonHost = new Panel
+        // "Display" column: the Textures / Layout grid / Hide tools toggles, moved out of the
+        // top action bar into their own boxed section.
+        GroupBox displaySection = new GroupBox
+        {
+            Text = "Display",
+            Dock = DockStyle.Top,
+            Height = 156,
+            Padding = new Padding(6, 2, 6, 6),
+            ForeColor = Color.LightGray
+        };
+        foreach (CheckBox chk in new[] { _btnTextures, _btnLayoutGrid, _btnHideTools, _chkRoadTextures })
+        {
+            chk.Dock = DockStyle.Top;
+            chk.AutoSize = false;
+            chk.Height = 24;
+            chk.ForeColor = Color.LightGray;
+            chk.TextAlign = ContentAlignment.MiddleLeft;
+        }
+
+        // The longer label is nudged to a smaller font so it fits the 135 px column.
+        _chkRoadTextures.Font = new Font("Segoe UI", 7.5f);
+
+        // Dock.Top children stack in reverse z-order (last added docks at the very top), so
+        // they are added bottom-first: Hide tools, Layout grid, Textures, Preview road textures.
+        displaySection.Controls.Add(_btnHideTools);
+        displaySection.Controls.Add(_btnLayoutGrid);
+        displaySection.Controls.Add(_btnTextures);
+        displaySection.Controls.Add(_chkRoadTextures);
+
+        Panel displayHost = new Panel
         {
             Dock = DockStyle.Left,
             Width = 135,
             Padding = new Padding(0, 0, 8, 0)
         };
-        cordonHost.Controls.Add(cordonSection);
+        displayHost.Controls.Add(displaySection);
 
-        Panel edgeCordonHost = new Panel
+        Panel edgeDisplayHost = new Panel
         {
             Dock = DockStyle.Top,
             Height = 500,
             Padding = new Padding(0)
         };
-        edgeCordonHost.Controls.Add(edgeFeaturesSection);
-        edgeCordonHost.Controls.Add(cordonHost);
+        edgeDisplayHost.Controls.Add(edgeFeaturesSection);
+        edgeDisplayHost.Controls.Add(displayHost);
 
         Button generateCommand = new Button
         {
@@ -893,9 +912,10 @@ public sealed partial class MainWindow : Form
 
         // Docked controls stack in reverse z-order (last added docks first), so
         // the last top-docked control ends up at the very top. Desired layout from
-        // top to bottom: Control Points, Edge Features (+ cordon column), Optimization.
+        // top to bottom: Control Points (the cordon box lives inside it, under Track
+        // controls), Edge Features (+ Display column), Optimization.
         sidePanelScroll.Controls.Add(optimizationSection);
-        sidePanelScroll.Controls.Add(edgeCordonHost);
+        sidePanelScroll.Controls.Add(edgeDisplayHost);
         sidePanelScroll.Controls.Add(trackSection);
 
         sidePanel.Controls.Add(sidePanelScroll);
@@ -908,11 +928,12 @@ public sealed partial class MainWindow : Form
         return sidePanel;
     }
 
-    /// <summary>Builds the cordon control column that sits in the 135 px strip to the LEFT of
-    /// the Edge Features group. Top to bottom: "Edit cordon" (arms the tool so a left-drag in
-    /// the 2D views redraws the box), "Active" (turns cordoning on — the box goes red and the
-    /// imported layout outside it is hidden / excluded from export), "Fit to map" (re-seeds
-    /// the box to the whole imported layout), and a compact bounds read-out.</summary>
+    /// <summary>Builds the cordon control box that sits directly under the Control Points
+    /// group (full width, never smaller than its fixed 178 px height). Top to bottom:
+    /// "Edit cordon" (arms the tool so a left-drag in the 2D views redraws the box), "Active"
+    /// (turns cordoning on — the box goes red and the imported layout outside it is hidden /
+    /// excluded from export), "Fit to map" (re-seeds the box to the whole imported layout),
+    /// and a compact bounds read-out.</summary>
     private GroupBox BuildCordonSection()
     {
         GroupBox box = new GroupBox
@@ -972,9 +993,14 @@ public sealed partial class MainWindow : Form
 
     private void ApplyCordonActiveFromControl()
     {
+        if (_syncingCordon)
+        {
+            return;
+        }
+
         // The box always exists (a 10k x 10k default), so enabling just turns culling on —
         // it never needs to create or reshape the box. If it is somehow degenerate, "Fit to
-        // map" is the explicit way to give it a real size.
+        // map" is the explicit way to give it a real size. Active is NOT undoable.
         _cordon.Set(_chkCordonActive.Checked, _cordon.Mins, _cordon.Maxs);
     }
 
@@ -996,7 +1022,9 @@ public sealed partial class MainWindow : Form
             return;
         }
 
+        _undo.RecordSingle();
         _cordon.Set(_cordon.Enabled, _layoutMins, _layoutMaxs);
+        UpdateUndoButtons();
     }
 
     private void UpdateCordonReadout()
@@ -1531,6 +1559,7 @@ public sealed partial class MainWindow : Form
         _gridCombo.SelectedIndexChanged += (s, e) => ApplyGridCombo();
         _btnSnap.CheckedChanged += (s, e) => ApplySnapToggle();
         _btnTextures.CheckedChanged += (s, e) => ApplyTexturesToggle();
+        _chkRoadTextures.CheckedChanged += (s, e) => ApplyRoadTexturesToggle();
         _btnLayoutGrid.CheckedChanged += (s, e) => ApplyLayoutGridToggle();
         _btnHideTools.CheckedChanged += (s, e) => ApplyHideToolsToggle();
         _chkSolidLeft.CheckedChanged += (s, e) => ApplySettingsFromControls();
@@ -3050,6 +3079,18 @@ public sealed partial class MainWindow : Form
         _doc.NotifyChanged();
         UpdateUndoButtons();
         UpdateIncrements();
+        SyncCordonControls();
+    }
+
+    /// <summary>Re-syncs the cordon Active checkbox (and read-out / colour) after an undo or
+    /// redo restored the cordon state, so the control never disagrees with the box.</summary>
+    private void SyncCordonControls()
+    {
+        _syncingCordon = true;
+        _chkCordonActive.Checked = _cordon.Enabled;
+        _syncingCordon = false;
+        UpdateCordonReadout();
+        ApplyCordonActiveAppearance();
     }
 
     private void UpdateUndoButtons()
@@ -3138,6 +3179,14 @@ public sealed partial class MainWindow : Form
         }
 
         UpdateTextureStatus();
+        InvalidateAll();
+    }
+
+    /// <summary>Preview road textures: draws the generated roads/sidewalks as solid, textured
+    /// surfaces in the 3D view (WYSIWYG with the export).</summary>
+    private void ApplyRoadTexturesToggle()
+    {
+        _v3d.ShowRoadTextures = _chkRoadTextures.Checked;
         InvalidateAll();
     }
 

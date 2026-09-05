@@ -64,10 +64,17 @@ public static class DisplacementSegment
         sb.Append("\t\t\"id\" \"").Append(solidId).Append("\"\r\n");
 
         // Face 1: top face with the displacement. V follows the road, U across.
+        // Texture coordinates must reproduce the source-exact mapping (see AppendSide) so
+        // the preview and the compiled map agree: U is anchored on the centreline (u=0 in
+        // the middle of the road) and V is anchored on the cumulative arc, so the texture
+        // flows continuously around curves. Anchoring V to each piece's own local tangent
+        // instead would make seams jump by an amount that scales with world position.
         Vec3 vTop = rowDir.Normalized();
         Vec3 uTop = (colDir - vTop * Vec3.Dot(colDir, vTop)).Normalized();
-        double vShift = textureVStart - Vec3.Dot(vTop, A);
-        AppendSide(sb, 1, A, B, C, s.Material, uTop, vTop, A, s.TextureScale, s.LightmapScale, leaveOpen: true, vShiftOverride: vShift);
+        double texScale = s.TextureScale > 0 ? s.TextureScale : 0.25;
+        double topUShift = -Vec3.Dot(uTop, A + colDir * 0.5) / texScale;
+        double topVShift = (textureVStart - Vec3.Dot(vTop, A)) / texScale;
+        AppendSide(sb, 1, A, B, C, s.Material, uTop, vTop, A, s.TextureScale, s.LightmapScale, leaveOpen: true, uShiftOverride: topUShift, vShiftOverride: topVShift);
         AppendDispInfo(sb, res, A, normals, distances, s.Power, Vec3.UnitZ);
         sb.Append("\t\t}\r\n");
 
@@ -81,10 +88,11 @@ public static class DisplacementSegment
         // Face 2: bottom, displaced to mirror the top surface shifted straight down.
         // Plane points (B2, A2, D2) keep the same winding as the other faces so the
         // brush stays valid; the displacement itself carries the surface shape.
-        // Texture axes match the top face (U across, V along with continuous V) so
-        // the underside texture stays aligned with the road.
-        double vShiftBottom = textureVStart - Vec3.Dot(vTop, A2);
-        AppendSide(sb, 2, B2, A2, D2, bottomMaterial, uTop, vTop, A2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidBottom, vShiftOverride: vShiftBottom);
+        // Texture axes match the top face (U across, V along with continuous V), using
+        // the same source-exact shifts so the underside shares the top's texture phase.
+        double bottomUShift = -Vec3.Dot(uTop, A2 + colDir * 0.5) / texScale;
+        double bottomVShift = (textureVStart - Vec3.Dot(vTop, A2)) / texScale;
+        AppendSide(sb, 2, B2, A2, D2, bottomMaterial, uTop, vTop, A2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidBottom, uShiftOverride: bottomUShift, vShiftOverride: bottomVShift);
         if (s.SolidBottom)
         {
             AppendBottomDispInfo(sb, res, B2, normals, distances, s.Power);
@@ -135,6 +143,7 @@ public static class DisplacementSegment
         double scale,
         int lightmapScale,
         bool leaveOpen = false,
+        double? uShiftOverride = null,
         double? vShiftOverride = null)
     {
         // For generic faces we derive texture axes from the face's parallelogram edges.
@@ -142,12 +151,16 @@ public static class DisplacementSegment
         Vec3 u = uDir ?? (p2 - p1).Normalized();
         Vec3 v = vDir ?? (p3 - p2).Normalized();
 
-        // Source texture coordinate convention (VBSP scales the whole vector):
-        //   texU = (Dot(point, uAxis) + uShift) * scale
-        //   texV = (Dot(point, vAxis) + vShift) * scale
-        // The 4th component of uaxis/vaxis is therefore in world units.
-        double uShift = -Vec3.Dot(u, origin);
-        double vShift = vShiftOverride ?? -Vec3.Dot(v, origin);
+        // Source/Hammer texture coordinate convention (verified against Hammer's
+        // MapFace::CalcTextureCoords, which DIVIDES by scale):
+        //   texU = Dot(point, uAxis) / scale + uShift
+        //   texV = Dot(point, vAxis) / scale + vShift
+        // so the 4th component of uaxis/vaxis is stored in world/scale units, NOT world
+        // units. Default origin-anchored shifts are therefore divided by scale; callers
+        // that thread a cumulative arc pass fully-computed overrides (already in /scale).
+        double safeScale = scale != 0 ? scale : 1.0;
+        double uShift = uShiftOverride ?? -Vec3.Dot(u, origin) / safeScale;
+        double vShift = vShiftOverride ?? -Vec3.Dot(v, origin) / safeScale;
 
         sb.Append("\t\tside\r\n\t\t{\r\n");
         sb.Append("\t\t\t\"id\" \"").Append(id).Append("\"\r\n");

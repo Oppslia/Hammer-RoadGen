@@ -12,6 +12,12 @@ public sealed class UndoManager
         public readonly List<Track> Tracks = new List<Track>();
         public int ActiveTrackIndex;
 
+        // Cordon box extents, captured only when the manager was constructed with a cordon.
+        // Only the box geometry is undoable (Fit-to-map / box drags); the Active culling
+        // toggle is deliberately NOT part of undo.
+        public Vec3 CordonMins;
+        public Vec3 CordonMaxs;
+
         public static Snapshot Capture(RoadDocument document)
         {
             Snapshot snapshot = new Snapshot
@@ -38,12 +44,36 @@ public sealed class UndoManager
             document.ActiveTrackIndex = ActiveTrackIndex;
         }
 
+        /// <summary>Applies the captured cordon state back to <paramref name="cordon"/> (no-op
+        /// when the manager has no cordon or the state already matches — Cordon.Set only
+        /// raises Changed on a real change).</summary>
+        public void RestoreCordon(Cordon cordon)
+        {
+            if (cordon == null)
+            {
+                return;
+            }
+
+            // Restores only the box extents; the Active toggle is left untouched (not
+            // undoable). Cordon.Set only raises Changed on a real change.
+            if (!cordon.Mins.Equals(CordonMins) || !cordon.Maxs.Equals(CordonMaxs))
+            {
+                cordon.Set(cordon.Enabled, CordonMins, CordonMaxs);
+            }
+        }
+
         /// <summary>True when two snapshots describe the same document state. Used
         /// to discard no-op undo batches (focus without editing, or toggling a value
         /// back to its original).</summary>
         public static bool Same(Snapshot first, Snapshot second)
         {
             if (first.ActiveTrackIndex != second.ActiveTrackIndex)
+            {
+                return false;
+            }
+
+            if (!first.CordonMins.Equals(second.CordonMins)
+                || !first.CordonMaxs.Equals(second.CordonMaxs))
             {
                 return false;
             }
@@ -181,6 +211,7 @@ public sealed class UndoManager
     }
 
     private readonly RoadDocument _doc;
+    private readonly Cordon _cordon;
     private readonly Stack<Snapshot> _undo = new Stack<Snapshot>();
     private readonly Stack<Snapshot> _redo = new Stack<Snapshot>();
     private Snapshot _batch;
@@ -192,9 +223,10 @@ public sealed class UndoManager
     /// any other control so it doesn't swallow unrelated edits.</summary>
     private bool _sessionBatch;
 
-    public UndoManager(RoadDocument doc)
+    public UndoManager(RoadDocument doc, Cordon cordon = null)
     {
         _doc = doc;
+        _cordon = cordon;
 
         // Track whether the document actually changes while a batch is open, so an
         // empty batch (e.g. merely focusing a control) isn't committed as a phantom
@@ -208,6 +240,20 @@ public sealed class UndoManager
         };
     }
 
+    /// <summary>Captures the document plus (when present) the cordon state, so cordon edits
+    /// participate in the same undo/redo history as road edits.</summary>
+    private Snapshot SnapshotNow()
+    {
+        Snapshot snapshot = Snapshot.Capture(_doc);
+        if (_cordon != null)
+        {
+            snapshot.CordonMins = _cordon.Mins;
+            snapshot.CordonMaxs = _cordon.Maxs;
+        }
+
+        return snapshot;
+    }
+
     /// <summary>Start a coalesced edit. The state is captured once; EndBatch commits
     /// it as a single undo step even if many changes happen in between.</summary>
     public void BeginBatch()
@@ -218,7 +264,7 @@ public sealed class UndoManager
 
         if (_batch == null)
         {
-            _batch = Snapshot.Capture(_doc);
+            _batch = SnapshotNow();
             _batchDirty = false;
         }
     }
@@ -234,7 +280,7 @@ public sealed class UndoManager
         // differs from when the batch began. Merely focusing a control (no edits),
         // or toggling a value back to its original (e.g. a checkbox clicked twice),
         // must not create a phantom undo step.
-        if (!Snapshot.Same(_batch, Snapshot.Capture(_doc)))
+        if (!Snapshot.Same(_batch, SnapshotNow()))
         {
             _undo.Push(_batch);
             _redo.Clear();
@@ -260,7 +306,7 @@ public sealed class UndoManager
             return;
         }
 
-        _undo.Push(Snapshot.Capture(_doc));
+        _undo.Push(SnapshotNow());
         _redo.Clear();
     }
 
@@ -281,7 +327,7 @@ public sealed class UndoManager
             return;
         }
 
-        _batch = Snapshot.Capture(_doc);
+        _batch = SnapshotNow();
         _sessionBatch = true;
         _batchDirty = false;
     }
@@ -300,7 +346,7 @@ public sealed class UndoManager
     public void RecordSingle()
     {
         CloseSession();
-        _undo.Push(Snapshot.Capture(_doc));
+        _undo.Push(SnapshotNow());
         _redo.Clear();
         _batch = null;
         _batchDirty = false;
@@ -326,8 +372,10 @@ public sealed class UndoManager
             return false;
         }
 
-        _redo.Push(Snapshot.Capture(_doc));
-        _undo.Pop().Restore(_doc);
+        _redo.Push(SnapshotNow());
+        Snapshot snapshot = _undo.Pop();
+        snapshot.Restore(_doc);
+        snapshot.RestoreCordon(_cordon);
         return true;
     }
 
@@ -340,8 +388,10 @@ public sealed class UndoManager
             return false;
         }
 
-        _undo.Push(Snapshot.Capture(_doc));
-        _redo.Pop().Restore(_doc);
+        _undo.Push(SnapshotNow());
+        Snapshot snapshot = _redo.Pop();
+        snapshot.Restore(_doc);
+        snapshot.RestoreCordon(_cordon);
         return true;
     }
 }

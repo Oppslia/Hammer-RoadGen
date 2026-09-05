@@ -77,6 +77,11 @@ public sealed class Viewport3D : Control
     /// materials (textured) instead of only as a wireframe. The wireframe still draws on top.</summary>
     public bool ShowTexturedReference;
 
+    /// <summary>When true, the generated road body and its edge features are drawn as solid,
+    /// textured surfaces with their real materials (WYSIWYG with the exported VMF), under the
+    /// wireframe. Uses the same software rasterizer + material cache as the layout textures.</summary>
+    public bool ShowRoadTextures;
+
     /// <summary>When true (default), faces of the imported layout whose material is a Source
     /// tool texture (tools/*, e.g. clip/skip/areaportal) are not drawn at all — only real
     /// geometry shows, like Hammer hiding tool brushes from the view.</summary>
@@ -178,6 +183,7 @@ public sealed class Viewport3D : Control
         DrawAxes(g);
         DrawTexturedReference(g);
         DrawReferenceWorld(g);
+        DrawRoadTextures(g);
 
         if (_doc != null)
         {
@@ -786,6 +792,167 @@ public sealed class Viewport3D : Control
 
         _frameBuffer.Blit(g, 0, 0);
     }
+
+    /// <summary>Textured generated-road preview: fills the road top surface and the top face
+    /// of every sidewalk/guardrail with its real material. UVs follow the export convention —
+    /// across-width scaled by TextureScale, continuous along the road — so the preview matches
+    /// the compiled map. Missing materials fall back to the world checkerboard. Drawn into a
+    /// fresh (transparent) frame buffer and composited over the layout, under the wireframe.</summary>
+    private void DrawRoadTextures(Graphics g)
+    {
+        if (!ShowRoadTextures || _doc == null || Width <= 0 || Height <= 0)
+        {
+            return;
+        }
+
+        _frameBuffer.Resize(Width, Height);
+        _frameBuffer.Clear();
+
+        const int steps = 20;
+
+        // Road body: top surface ribbon, per track span so each track keeps its own material.
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
+
+            RoadPreviewMesh road = RoadPreviewMesh.Build(chain.Points, steps, chain.Closed);
+            if (road.Left.Count < 2)
+            {
+                continue;
+            }
+
+            double[] arc = CumulativeAlong(road.Left, road.Right);
+            foreach (ChainSpan span in chain.Spans)
+            {
+                if (span.EndPoint - span.StartPoint < 2 || span.Track?.Settings == null)
+                {
+                    continue;
+                }
+
+                int startIndex = span.StartPoint * steps;
+                int endIndex = (span.EndPoint - 1) * steps;
+                FillTexturedStrip(road.Left, road.Right, arc, startIndex, endIndex,
+                    span.Track.Settings.Material, span.Track.Settings.TextureScale);
+            }
+        }
+
+        // Edge features (sidewalks / guardrails): textured top ribbon for each feature.
+        foreach (RoadChain chain in _doc.BuildChains())
+        {
+            if (chain.Points.Count < 2)
+            {
+                continue;
+            }
+
+            RoadSettings chainSettings = chain.Spans.Count > 0 ? chain.Spans[0].Track?.Settings : null;
+            double featureScale = chainSettings?.TextureScale ?? 0.25;
+            foreach (ChainFeature chainFeature in chain.CollectFeatures())
+            {
+                EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, steps, chainFeature, chain.Closed);
+                if (mesh.InnerTop.Count < 2)
+                {
+                    continue;
+                }
+
+                double[] arc = CumulativeAlong(mesh.InnerTop, mesh.OuterTop);
+                FillTexturedStrip(mesh.InnerTop, mesh.OuterTop, arc, 0, mesh.InnerTop.Count - 1,
+                    chainFeature.Feature.Material, featureScale);
+            }
+        }
+
+        _frameBuffer.Blit(g, 0, 0);
+    }
+
+    /// <summary>Fills the ribbon between <paramref name="inner"/> and <paramref name="outer"/>
+    /// sample edges (samples <c>[startIndex, endIndex)</c>) as textured quads. <paramref name="arc"/>
+    /// holds the cumulative distance along the strip (continuous V); U runs across the width,
+    /// half-width per sample so textures never seam at sample boundaries.</summary>
+    private void FillTexturedStrip(IReadOnlyList<Vec3> inner, IReadOnlyList<Vec3> outer,
+        double[] arc, int startIndex, int endIndex, string material, double texScale)
+    {
+        int max = Math.Min(inner.Count, outer.Count);
+        startIndex = Math.Max(0, startIndex);
+        endIndex = Math.Min(endIndex, max - 1);
+        if (startIndex >= endIndex)
+        {
+            return;
+        }
+
+        Bitmap texture = MaterialCache.GetMaterialBitmap(material);
+        bool fallback = MaterialCache.IsFallback(texture);
+        if (texture.Width <= 0 || texture.Height <= 0)
+        {
+            return;
+        }
+
+        int[] bits = GetTexturePixels(texture);
+        double texW = texture.Width;
+        // Real material: UVs in texture-widths (world / (texScale * texW)). Missing texture:
+        // world checkerboard (cell size in world units) like the layout fallback.
+        double divisor = fallback
+            ? TextureRasterizer.FallbackCellSize
+            : (texScale > 0 ? texScale * texW : texW);
+        if (divisor <= 0)
+        {
+            return;
+        }
+
+        for (int i = startIndex; i < endIndex; i++)
+        {
+            Vec3 i0 = inner[i];
+            Vec3 o0 = outer[i];
+            Vec3 i1 = inner[i + 1];
+            Vec3 o1 = outer[i + 1];
+            double w0 = VecLength(o0 - i0);
+            double w1 = VecLength(o1 - i1);
+            if (w0 < 1e-4 || w1 < 1e-4)
+            {
+                continue;
+            }
+
+            double uL0 = -w0 / 2.0 / divisor;
+            double uH0 = w0 / 2.0 / divisor;
+            double uL1 = -w1 / 2.0 / divisor;
+            double uH1 = w1 / 2.0 / divisor;
+            double v0 = i < arc.Length ? arc[i] / divisor : 0;
+            double v1 = i + 1 < arc.Length ? arc[i + 1] / divisor : v0;
+
+            var a = new TextureRasterizer.Vertex(i0, (float)uL0, (float)v0);
+            var b = new TextureRasterizer.Vertex(o0, (float)uH0, (float)v0);
+            var c = new TextureRasterizer.Vertex(i1, (float)uL1, (float)v1);
+            var d = new TextureRasterizer.Vertex(o1, (float)uH1, (float)v1);
+
+            TextureRasterizer.FillTriangle(_frameBuffer, a, b, c,
+                _eye, _forward, _right, _up, (float)_focal, Width, Height,
+                bits, texture.Width, texture.Height, fallback);
+            TextureRasterizer.FillTriangle(_frameBuffer, b, d, c,
+                _eye, _forward, _right, _up, (float)_focal, Width, Height,
+                bits, texture.Width, texture.Height, fallback);
+        }
+    }
+
+    /// <summary>Cumulative arc length along the strip (midpoint of the inner/outer edges), so
+    /// the texture V runs continuously along the road without resetting at joins.</summary>
+    private static double[] CumulativeAlong(IReadOnlyList<Vec3> inner, IReadOnlyList<Vec3> outer)
+    {
+        int count = Math.Min(inner.Count, outer.Count);
+        var arc = new double[count];
+        for (int i = 1; i < count; i++)
+        {
+            Vec3 a = Mid(inner[i - 1], outer[i - 1]);
+            Vec3 b = Mid(inner[i], outer[i]);
+            arc[i] = arc[i - 1] + VecLength(b - a);
+        }
+
+        return arc;
+    }
+
+    private static Vec3 Mid(Vec3 a, Vec3 b) => (a + b) * 0.5;
+
+    private static double VecLength(Vec3 a) => Math.Sqrt(a.X * a.X + a.Y * a.Y + a.Z * a.Z);
 
     // For missing-texture (fallback) faces the vertex UVs are set to the point's distance along
     // the face's own Hammer axes in checker-cell units; the rasterizer tiles them into the

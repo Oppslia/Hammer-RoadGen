@@ -29,6 +29,7 @@ public sealed partial class MainWindow
         _tooltipManager.Attach(_gridCombo, "Grid interval (HU)");
         _tooltipManager.Attach(_btnSnap, "Toggle snapping points to the grid");
         _tooltipManager.Attach(_btnTextures, "Show the imported layout textured with its game materials");
+        _tooltipManager.Attach(_chkRoadTextures, "Preview the roads/sidewalks textured with their materials");
         _tooltipManager.Attach(_btnLayoutGrid, "Show the imported layout's wireframe grid (turn off to view just the textures)");
         _tooltipManager.Attach(_btnHideTools, "Hide imported tool-texture brushes (tools/* like clip/skip/areaportal) — on by default; uncheck to show them");
 
@@ -69,8 +70,8 @@ public sealed partial class MainWindow
         _tooltipManager.Attach(_numFeatureBank, "Cross-slope (bank) of the strip in degrees");
 
         // ---- Cordon ----
-        _tooltipManager.Attach(_chkCordonEdit, "Arm the cordon tool, then in a 2D view drag inside the box to move it (grid-snapped, starts as a 5k x 5k box at the origin) or drag a corner handle to resize it. Clicking empty space does not redraw the box; use Fit to map to size it to the layout");
+        _tooltipManager.Attach(_chkCordonEdit, "Edit the cordon bounds");
         _tooltipManager.Attach(_chkCordonActive, "Turn cordoning on: only the imported layout inside the red box is drawn, and only tracks inside it are exported to the VMF");
-        _tooltipManager.Attach(_btnCordonFit, "Re-seed the cordon box to the whole imported layout");
+        _tooltipManager.Attach(_btnCordonFit, "Seed the cordon bounds to the whole imported layout");
     }
 }
