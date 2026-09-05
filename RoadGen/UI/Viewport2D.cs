@@ -96,7 +96,7 @@ public sealed class Viewport2D : Control
     public void SetDocument(RoadDocument doc) => _doc = doc;
 
     public bool ShowSegments;
-    public bool ShowFeatureSegments;
+    public bool ShowEdgeSegments;
     public bool ShowReferenceWorld = true;
 
     /// <summary>When true (default), faces of the imported layout whose material is a Source
@@ -291,7 +291,7 @@ public sealed class Viewport2D : Control
         DrawAllTracks(g);
         DrawEdgeFeatures(g);
         DrawSegments(g);
-        DrawFeatureSegments(g);
+        DrawEdgeSegments(g);
         DrawInactivePoints(g);
         DrawPoints(g);
         DrawHint(g);
@@ -751,9 +751,9 @@ public sealed class Viewport2D : Control
         }
     }
 
-    private void DrawFeatureSegments(Graphics g)
+    private void DrawEdgeSegments(Graphics g)
     {
-        if (!ShowFeatureSegments || _doc == null)
+        if (!ShowEdgeSegments || _doc == null)
         {
             return;
         }

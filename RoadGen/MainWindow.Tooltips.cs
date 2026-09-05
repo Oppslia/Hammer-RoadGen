@@ -37,7 +37,7 @@ public sealed partial class MainWindow
         _tooltipManager.Attach(_cboPower, "Displacement power (higher = denser grid)");
         _tooltipManager.Attach(_txtMaterial, "Material applied to every generated face — click or use … to browse installed game materials");
         _tooltipManager.Attach(_btnBrowseMaterial, "Browse installed game materials");
-        _tooltipManager.Attach(_btnBrowseFeatureMaterial, "Browse installed game materials for this strip");
+        _tooltipManager.Attach(_btnBrowseEdgeMaterial, "Browse installed game materials for this strip");
         _tooltipManager.Attach(_numTexScale, "Texture scale written to the displacement face");
         _tooltipManager.Attach(_chkFitTextures, "Fit textures like Hammer's Face Edit Sheet \"Fit\" (Whole Face): each generated segment shows exactly ONE full texture, anchored at its start — the segment's Texture scale is ignored. Mirrors what you get by selecting the faces in Hammer and pressing Fit.");
         _tooltipManager.Attach(_cboLightmap, "Lightmap scale for every face");
@@ -60,15 +60,15 @@ public sealed partial class MainWindow
         _tooltipManager.Attach(_btnLayerDown, "Move the selected layer down");
 
         // ---- Edge features ----
-        _tooltipManager.Attach(_btnAddFeature, "Add a sidewalk or guardrail strip");
-        _tooltipManager.Attach(_btnRemoveFeature, "Remove the selected strip");
-        _tooltipManager.Attach(_cboFeatureKind, "Kind of edge feature: sidewalk or guardrail");
-        _tooltipManager.Attach(_cboFeatureSide, "Which side of the road the strip sits on");
-        _tooltipManager.Attach(_numFeatureOffset, "Distance from the road edge to the strip");
-        _tooltipManager.Attach(_numFeatureWidth, "Strip width");
-        _tooltipManager.Attach(_numFeatureBottomZ, "Strip bottom height above the road surface");
-        _tooltipManager.Attach(_numFeatureTopZ, "Strip top height above the road surface");
-        _tooltipManager.Attach(_numFeatureBank, "Cross-slope (bank) of the strip in degrees");
+        _tooltipManager.Attach(_btnAddEdge, "Add a sidewalk or guardrail strip");
+        _tooltipManager.Attach(_btnRemoveEdge, "Remove the selected strip");
+        _tooltipManager.Attach(_cboEdgeKind, "Kind of edge feature: sidewalk or guardrail");
+        _tooltipManager.Attach(_cboEdgeSide, "Which side of the road the strip sits on");
+        _tooltipManager.Attach(_numEdgeOffset, "Distance from the road edge to the strip");
+        _tooltipManager.Attach(_numEdgeWidth, "Strip width");
+        _tooltipManager.Attach(_numEdgeBottomZ, "Strip bottom height above the road surface");
+        _tooltipManager.Attach(_numEdgeTopZ, "Strip top height above the road surface");
+        _tooltipManager.Attach(_numEdgeBank, "Cross-slope (bank) of the strip in degrees");
 
         // ---- Cordon ----
         _tooltipManager.Attach(_chkCordonEdit, "Edit the cordon bounds");

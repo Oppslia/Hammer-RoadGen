@@ -33,7 +33,7 @@ namespace RoadGen.Core;
 public static class TrackFile
 {
     /// <summary>The version this build writes to disk. Bump whenever the format changes.</summary>
-    public const int CurrentVersion = 9;
+    public const int CurrentVersion = 10;
 
     /// <summary>One entry per historical version gap. Index 0 migrates v1->v2,
     /// index 1 migrates v2->v3, and so on.</summary>
@@ -46,8 +46,9 @@ public static class TrackFile
         Migrate5To6,
         Migrate6To7,
         Migrate7To8,
-        Migrate8To9
-        // Migrate9To10, ... append future migrations here.
+        Migrate8To9,
+        Migrate9To10
+        // Migrate10To11, ... append future migrations here.
     };
 
     public sealed class TrackLoadResult
@@ -123,16 +124,16 @@ public static class TrackFile
         public double IncCustomBank { get; set; } = 4;
         public bool IncUseGridThickness { get; set; } = true;
         public double IncCustomThickness { get; set; } = 64;
-        public bool FeatureIncUseGridOffset { get; set; } = true;
-        public bool FeatureIncUseGridWidth { get; set; } = true;
-        public bool FeatureIncUseGridBottomZ { get; set; } = true;
-        public bool FeatureIncUseGridTopZ { get; set; } = true;
-        public bool FeatureIncUseGridBank { get; set; } = false;
-        public double FeatureIncCustomOffset { get; set; } = 64;
-        public double FeatureIncCustomWidth { get; set; } = 64;
-        public double FeatureIncCustomBottomZ { get; set; } = 64;
-        public double FeatureIncCustomTopZ { get; set; } = 64;
-        public double FeatureIncCustomBank { get; set; } = 4;
+        public bool EdgeIncUseGridOffset { get; set; } = true;
+        public bool EdgeIncUseGridWidth { get; set; } = true;
+        public bool EdgeIncUseGridBottomZ { get; set; } = true;
+        public bool EdgeIncUseGridTopZ { get; set; } = true;
+        public bool EdgeIncUseGridBank { get; set; } = false;
+        public double EdgeIncCustomOffset { get; set; } = 64;
+        public double EdgeIncCustomWidth { get; set; } = 64;
+        public double EdgeIncCustomBottomZ { get; set; } = 64;
+        public double EdgeIncCustomTopZ { get; set; } = 64;
+        public double EdgeIncCustomBank { get; set; } = 4;
     }
 
     private sealed class PointData
@@ -184,16 +185,16 @@ public static class TrackFile
                     IncCustomBank = track.Settings.IncCustomBank,
                     IncUseGridThickness = track.Settings.IncUseGridThickness,
                     IncCustomThickness = track.Settings.IncCustomThickness,
-                    FeatureIncUseGridOffset = track.Settings.FeatureIncUseGridOffset,
-                    FeatureIncUseGridWidth = track.Settings.FeatureIncUseGridWidth,
-                    FeatureIncUseGridBottomZ = track.Settings.FeatureIncUseGridBottomZ,
-                    FeatureIncUseGridTopZ = track.Settings.FeatureIncUseGridTopZ,
-                    FeatureIncUseGridBank = track.Settings.FeatureIncUseGridBank,
-                    FeatureIncCustomOffset = track.Settings.FeatureIncCustomOffset,
-                    FeatureIncCustomWidth = track.Settings.FeatureIncCustomWidth,
-                    FeatureIncCustomBottomZ = track.Settings.FeatureIncCustomBottomZ,
-                    FeatureIncCustomTopZ = track.Settings.FeatureIncCustomTopZ,
-                    FeatureIncCustomBank = track.Settings.FeatureIncCustomBank
+                    EdgeIncUseGridOffset = track.Settings.EdgeIncUseGridOffset,
+                    EdgeIncUseGridWidth = track.Settings.EdgeIncUseGridWidth,
+                    EdgeIncUseGridBottomZ = track.Settings.EdgeIncUseGridBottomZ,
+                    EdgeIncUseGridTopZ = track.Settings.EdgeIncUseGridTopZ,
+                    EdgeIncUseGridBank = track.Settings.EdgeIncUseGridBank,
+                    EdgeIncCustomOffset = track.Settings.EdgeIncCustomOffset,
+                    EdgeIncCustomWidth = track.Settings.EdgeIncCustomWidth,
+                    EdgeIncCustomBottomZ = track.Settings.EdgeIncCustomBottomZ,
+                    EdgeIncCustomTopZ = track.Settings.EdgeIncCustomTopZ,
+                    EdgeIncCustomBank = track.Settings.EdgeIncCustomBank
                 }
             };
 
@@ -388,16 +389,16 @@ public static class TrackFile
         settings.IncCustomBank = data.IncCustomBank;
         settings.IncUseGridThickness = data.IncUseGridThickness;
         settings.IncCustomThickness = data.IncCustomThickness;
-        settings.FeatureIncUseGridOffset = data.FeatureIncUseGridOffset;
-        settings.FeatureIncUseGridWidth = data.FeatureIncUseGridWidth;
-        settings.FeatureIncUseGridBottomZ = data.FeatureIncUseGridBottomZ;
-        settings.FeatureIncUseGridTopZ = data.FeatureIncUseGridTopZ;
-        settings.FeatureIncUseGridBank = data.FeatureIncUseGridBank;
-        settings.FeatureIncCustomOffset = data.FeatureIncCustomOffset;
-        settings.FeatureIncCustomWidth = data.FeatureIncCustomWidth;
-        settings.FeatureIncCustomBottomZ = data.FeatureIncCustomBottomZ;
-        settings.FeatureIncCustomTopZ = data.FeatureIncCustomTopZ;
-        settings.FeatureIncCustomBank = data.FeatureIncCustomBank;
+        settings.EdgeIncUseGridOffset = data.EdgeIncUseGridOffset;
+        settings.EdgeIncUseGridWidth = data.EdgeIncUseGridWidth;
+        settings.EdgeIncUseGridBottomZ = data.EdgeIncUseGridBottomZ;
+        settings.EdgeIncUseGridTopZ = data.EdgeIncUseGridTopZ;
+        settings.EdgeIncUseGridBank = data.EdgeIncUseGridBank;
+        settings.EdgeIncCustomOffset = data.EdgeIncCustomOffset;
+        settings.EdgeIncCustomWidth = data.EdgeIncCustomWidth;
+        settings.EdgeIncCustomBottomZ = data.EdgeIncCustomBottomZ;
+        settings.EdgeIncCustomTopZ = data.EdgeIncCustomTopZ;
+        settings.EdgeIncCustomBank = data.EdgeIncCustomBank;
     }
 
     private static EdgeFeatureKind ParseEdgeFeatureKind(string value)
@@ -588,16 +589,16 @@ public static class TrackFile
                 continue;
             }
 
-            if (s["FeatureIncUseGridOffset"] == null) s["FeatureIncUseGridOffset"] = true;
-            if (s["FeatureIncUseGridWidth"] == null) s["FeatureIncUseGridWidth"] = true;
-            if (s["FeatureIncUseGridBottomZ"] == null) s["FeatureIncUseGridBottomZ"] = true;
-            if (s["FeatureIncUseGridTopZ"] == null) s["FeatureIncUseGridTopZ"] = true;
-            if (s["FeatureIncUseGridBank"] == null) s["FeatureIncUseGridBank"] = false;
-            if (s["FeatureIncCustomOffset"] == null) s["FeatureIncCustomOffset"] = 64.0;
-            if (s["FeatureIncCustomWidth"] == null) s["FeatureIncCustomWidth"] = 64.0;
-            if (s["FeatureIncCustomBottomZ"] == null) s["FeatureIncCustomBottomZ"] = 64.0;
-            if (s["FeatureIncCustomTopZ"] == null) s["FeatureIncCustomTopZ"] = 64.0;
-            if (s["FeatureIncCustomBank"] == null) s["FeatureIncCustomBank"] = 4.0;
+            if (s["EdgeIncUseGridOffset"] == null) s["EdgeIncUseGridOffset"] = true;
+            if (s["EdgeIncUseGridWidth"] == null) s["EdgeIncUseGridWidth"] = true;
+            if (s["EdgeIncUseGridBottomZ"] == null) s["EdgeIncUseGridBottomZ"] = true;
+            if (s["EdgeIncUseGridTopZ"] == null) s["EdgeIncUseGridTopZ"] = true;
+            if (s["EdgeIncUseGridBank"] == null) s["EdgeIncUseGridBank"] = false;
+            if (s["EdgeIncCustomOffset"] == null) s["EdgeIncCustomOffset"] = 64.0;
+            if (s["EdgeIncCustomWidth"] == null) s["EdgeIncCustomWidth"] = 64.0;
+            if (s["EdgeIncCustomBottomZ"] == null) s["EdgeIncCustomBottomZ"] = 64.0;
+            if (s["EdgeIncCustomTopZ"] == null) s["EdgeIncCustomTopZ"] = 64.0;
+            if (s["EdgeIncCustomBank"] == null) s["EdgeIncCustomBank"] = 4.0;
         }
     }
 
@@ -624,6 +625,58 @@ public static class TrackFile
 
             if (s["IncUseGridThickness"] == null) s["IncUseGridThickness"] = true;
             if (s["IncCustomThickness"] == null) s["IncCustomThickness"] = 64.0;
+        }
+    }
+
+    /// <summary>v9 -> v10: renames the per-edge-feature increment setting keys from the
+    /// legacy "FeatureInc*" spelling to "EdgeInc*" (the model identifiers were renamed, and
+    /// System.Text.Json keys follow the property names, so files saved before the rename
+    /// would otherwise silently lose those settings), and seeds the new "FitTextures" flag
+    /// with its new default (true = Hammer whole-face fitting).</summary>
+    private static void Migrate9To10(JsonObject root)
+    {
+        if (root["Tracks"] is not JsonArray tracks)
+        {
+            return;
+        }
+
+        // Legacy JSON key -> current JSON key.
+        string[][] renames =
+        {
+            new[] { "FeatureIncUseGridOffset", "EdgeIncUseGridOffset" },
+            new[] { "FeatureIncUseGridWidth", "EdgeIncUseGridWidth" },
+            new[] { "FeatureIncUseGridBottomZ", "EdgeIncUseGridBottomZ" },
+            new[] { "FeatureIncUseGridTopZ", "EdgeIncUseGridTopZ" },
+            new[] { "FeatureIncUseGridBank", "EdgeIncUseGridBank" },
+            new[] { "FeatureIncCustomOffset", "EdgeIncCustomOffset" },
+            new[] { "FeatureIncCustomWidth", "EdgeIncCustomWidth" },
+            new[] { "FeatureIncCustomBottomZ", "EdgeIncCustomBottomZ" },
+            new[] { "FeatureIncCustomTopZ", "EdgeIncCustomTopZ" },
+            new[] { "FeatureIncCustomBank", "EdgeIncCustomBank" }
+        };
+
+        foreach (JsonNode trackNode in tracks)
+        {
+            if (trackNode is not JsonObject track)
+            {
+                continue;
+            }
+
+            if (track["Settings"] is not JsonObject s)
+            {
+                continue;
+            }
+
+            foreach (string[] pair in renames)
+            {
+                if (s[pair[0]] is JsonNode value)
+                {
+                    s[pair[1]] = value.DeepClone();
+                    s.Remove(pair[0]);
+                }
+            }
+
+            if (s["FitTextures"] == null) s["FitTextures"] = true;
         }
     }
 }

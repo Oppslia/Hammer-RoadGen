@@ -78,7 +78,7 @@ public static class MainWindowHelpers
     /// <summary>Adds a label/value row to the edge feature editor, placing the
     /// optional increment cell (Grid checkbox + interval) to the LEFT of the value
     /// so it never gets clipped by the panel's scrollbar.</summary>
-    public static void AddFeatureSettingRow(TableLayoutPanel table, int row, string label, Control control, Control incrementCell)
+    public static void AddIncrementRow(TableLayoutPanel table, int row, string label, Control control, Control incrementCell)
     {
         Label lbl = new Label
         {
@@ -133,7 +133,7 @@ public static class MainWindowHelpers
 
     /// <summary>Builds a compact "Grid" checkbox + custom increment field that sits
     /// next to one edge-feature value (Width/Bottom Z/Top Z/Bank).</summary>
-    public static Control BuildFeatureIncrementCell(CheckBox chk, NumericUpDown num, bool followGrid, decimal customValue)
+    public static Control BuildIncrementCell(CheckBox chk, NumericUpDown num, bool followGrid, decimal customValue)
     {
         TableLayoutPanel cell = new TableLayoutPanel
         {
@@ -219,7 +219,7 @@ public static class MainWindowHelpers
         return best;
     }
 
-    public static string FeatureSummary(EdgeFeature feature)
+    public static string EdgeSummary(EdgeFeature feature)
     {
         string side = feature.LeftSide ? "Left" : "Right";
 

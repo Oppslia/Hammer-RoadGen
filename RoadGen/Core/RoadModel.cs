@@ -54,8 +54,9 @@ public sealed class RoadSettings
     /// face-edit "Fit" (Whole Face) button maps it: the material is scaled so exactly ONE
     /// full texture fills each face, anchored at the face's minimum U/V corner. This
     /// overrides <see cref="TextureScale"/> (which otherwise controls world units per
-    /// tile). It mirrors Hammer, which fits each selected face to its own extents.</summary>
-    public bool FitTextures = false;
+    /// tile). It mirrors Hammer, which fits each selected face to its own extents.
+    /// Defaults to true (on) so new roads start with the fitted look.</summary>
+    public bool FitTextures = true;
 
     /// <summary>Lightmap scale for every face.</summary>
     public int LightmapScale = 16;
@@ -86,16 +87,16 @@ public sealed class RoadSettings
     // Edge-feature editor increment/decrement interval settings, mirroring the road
     // point editor's Inc* fields above. Each feature value row (Offset, Width,
     // Bottom Z, Top Z, Bank) has its own "Grid" toggle and custom interval.
-    public bool FeatureIncUseGridOffset = true;
-    public bool FeatureIncUseGridWidth = true;
-    public bool FeatureIncUseGridBottomZ = true;
-    public bool FeatureIncUseGridTopZ = true;
-    public bool FeatureIncUseGridBank = false;
-    public double FeatureIncCustomOffset = 64;
-    public double FeatureIncCustomWidth = 64;
-    public double FeatureIncCustomBottomZ = 64;
-    public double FeatureIncCustomTopZ = 64;
-    public double FeatureIncCustomBank = 4;
+    public bool EdgeIncUseGridOffset = true;
+    public bool EdgeIncUseGridWidth = true;
+    public bool EdgeIncUseGridBottomZ = true;
+    public bool EdgeIncUseGridTopZ = true;
+    public bool EdgeIncUseGridBank = false;
+    public double EdgeIncCustomOffset = 64;
+    public double EdgeIncCustomWidth = 64;
+    public double EdgeIncCustomBottomZ = 64;
+    public double EdgeIncCustomTopZ = 64;
+    public double EdgeIncCustomBank = 4;
 
     /// <summary>Snap a value to the configured grid.</summary>
     public double Snapped(double value)
@@ -136,16 +137,16 @@ public sealed class RoadSettings
             IncCustomBank = IncCustomBank,
             IncUseGridThickness = IncUseGridThickness,
             IncCustomThickness = IncCustomThickness,
-            FeatureIncUseGridOffset = FeatureIncUseGridOffset,
-            FeatureIncUseGridWidth = FeatureIncUseGridWidth,
-            FeatureIncUseGridBottomZ = FeatureIncUseGridBottomZ,
-            FeatureIncUseGridTopZ = FeatureIncUseGridTopZ,
-            FeatureIncUseGridBank = FeatureIncUseGridBank,
-            FeatureIncCustomOffset = FeatureIncCustomOffset,
-            FeatureIncCustomWidth = FeatureIncCustomWidth,
-            FeatureIncCustomBottomZ = FeatureIncCustomBottomZ,
-            FeatureIncCustomTopZ = FeatureIncCustomTopZ,
-            FeatureIncCustomBank = FeatureIncCustomBank
+            EdgeIncUseGridOffset = EdgeIncUseGridOffset,
+            EdgeIncUseGridWidth = EdgeIncUseGridWidth,
+            EdgeIncUseGridBottomZ = EdgeIncUseGridBottomZ,
+            EdgeIncUseGridTopZ = EdgeIncUseGridTopZ,
+            EdgeIncUseGridBank = EdgeIncUseGridBank,
+            EdgeIncCustomOffset = EdgeIncCustomOffset,
+            EdgeIncCustomWidth = EdgeIncCustomWidth,
+            EdgeIncCustomBottomZ = EdgeIncCustomBottomZ,
+            EdgeIncCustomTopZ = EdgeIncCustomTopZ,
+            EdgeIncCustomBank = EdgeIncCustomBank
         };
 
         return copy;

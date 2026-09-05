@@ -27,6 +27,26 @@ public sealed class Viewport3D : Control
     // dollies along the view direction; nothing orbits a target anymore.
     private double _flySpeed = 1500;
 
+    /// <summary>Current freelook fly speed (world units/second), clamped to [100, 200000].
+    /// Change it through this property (Shift+wheel tuning, Frame All distance, or the
+    /// toolbar fly-speed field) so <see cref="FlySpeedChanged"/> keeps the readout in sync.</summary>
+    public event EventHandler FlySpeedChanged;
+
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public double FlySpeed
+    {
+        get => _flySpeed;
+        set
+        {
+            double clamped = Math.Max(100, Math.Min(200000, value));
+            if (Math.Abs(clamped - _flySpeed) > 1e-9)
+            {
+                _flySpeed = clamped;
+                FlySpeedChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
     // Keyboard fly speed multiplier (WASD/Q/E). The wheel dolly and Shift+wheel speed tuning
     // are intentionally NOT scaled by this, so they stay fine-grained.
     private const double MovementSpeedScale = 2.0;
@@ -39,7 +59,11 @@ public sealed class Viewport3D : Control
     // coming while a key is held but nothing else (mouse look, etc.) is invalidating.
     private bool _keyForward, _keyBack, _keyLeft, _keyRight, _keyUp, _keyDown;
     private readonly System.Windows.Forms.Timer _flyTimer = new System.Windows.Forms.Timer { Interval = 16 };
-    private long _lastMoveMs;
+    // High-resolution clock drives the fly dt. The old low-res Environment.TickCount64 made
+    // the camera lurch forward during right-drag look, when repaints flood faster than a
+    // single tick (see ApplyFlyMovement).
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private double _lastMoveSeconds;
 
     private bool _clickCandidate;
     private Point _downPos;
@@ -70,7 +94,7 @@ public sealed class Viewport3D : Control
     public void SetDocument(RoadDocument doc) => _doc = doc;
 
     public bool ShowSegments;
-    public bool ShowFeatureSegments;
+    public bool ShowEdgeSegments;
     public bool ShowReferenceWorld = true;
 
     /// <summary>When true, the imported reference world is rendered with its actual game
@@ -190,7 +214,7 @@ public sealed class Viewport3D : Control
             DrawAllTracks(g);
             DrawEdgeFeatures(g);
             DrawSegments(g);
-            DrawFeatureSegments(g);
+            DrawEdgeSegments(g);
             DrawInactivePoints(g);
             DrawPoints(g);
         }
@@ -258,7 +282,7 @@ public sealed class Viewport3D : Control
             double span = Math.Max(256, Math.Max(max.X - min.X, Math.Max(max.Y - min.Y, max.Z - min.Z)));
             double dist = span * 2.6;
             _eye = centre + ViewDir(_yaw, _pitch) * dist;
-            _flySpeed = Math.Max(400, dist * 0.8);
+            FlySpeed = Math.Max(400, dist * 0.8);
         }
     }
 
@@ -591,9 +615,9 @@ public sealed class Viewport3D : Control
         }
     }
 
-    private void DrawFeatureSegments(Graphics g)
+    private void DrawEdgeSegments(Graphics g)
     {
-        if (!ShowFeatureSegments || _doc == null)
+        if (!ShowEdgeSegments || _doc == null)
         {
             return;
         }
@@ -832,20 +856,43 @@ public sealed class Viewport3D : Control
                     continue;
                 }
 
+                RoadSettings rs = span.Track.Settings;
                 // Hammer "Fit": each exported piece is one full texture anchored at its
                 // start, so the preview must subdivide into the SAME export pieces (one per
                 // control-point segment, split like the exporter does by SegmentLength).
-                if (span.Track.Settings.FitTextures)
+                if (rs.FitTextures)
                 {
                     DrawFittedPieces(road.Left, road.Right, arc, chain.Points, chain.Closed,
-                        span.StartPoint, span.EndPoint - 1, 0, span.Track.Settings, steps);
+                        span.StartPoint, span.EndPoint - 1, 0, rs, steps);
+                    if (rs.SolidLeft)
+                    {
+                        // Left wall: ribbon between the road's left top edge and its bottom.
+                        DrawFittedPieces(road.Left, road.BottomLeft, arc, chain.Points, chain.Closed,
+                            span.StartPoint, span.EndPoint - 1, 0, rs, steps);
+                    }
+
+                    if (rs.SolidRight)
+                    {
+                        // Right wall: ribbon between the road's right top edge and its bottom.
+                        DrawFittedPieces(road.Right, road.BottomRight, arc, chain.Points, chain.Closed,
+                            span.StartPoint, span.EndPoint - 1, 0, rs, steps);
+                    }
+
                     continue;
                 }
 
                 int startIndex = span.StartPoint * steps;
                 int endIndex = (span.EndPoint - 1) * steps;
-                FillTexturedStrip(road.Left, road.Right, arc, startIndex, endIndex,
-                    span.Track.Settings.Material, span.Track.Settings.TextureScale);
+                FillTexturedStrip(road.Left, road.Right, arc, startIndex, endIndex, rs.Material, rs.TextureScale);
+                if (rs.SolidLeft)
+                {
+                    FillTexturedStrip(road.Left, road.BottomLeft, arc, startIndex, endIndex, rs.Material, rs.TextureScale);
+                }
+
+                if (rs.SolidRight)
+                {
+                    FillTexturedStrip(road.Right, road.BottomRight, arc, startIndex, endIndex, rs.Material, rs.TextureScale);
+                }
             }
         }
 
@@ -869,6 +916,8 @@ public sealed class Viewport3D : Control
                 }
 
                 double[] arc = CumulativeAlong(mesh.InnerTop, mesh.OuterTop);
+                EdgeFeature edgeFeature = chainFeature.Feature;
+                string featureMaterial = edgeFeature.Material;
                 if (featureFit && chainSettings != null)
                 {
                     // Fit mirrors the road: one texture per exported piece. The feature mesh
@@ -879,11 +928,36 @@ public sealed class Viewport3D : Control
                     int featEnd = Math.Clamp(chainFeature.EndPoint, featStart + 1, chain.Points.Count);
                     DrawFittedPieces(mesh.InnerTop, mesh.OuterTop, arc, chain.Points, chain.Closed,
                         featStart, featEnd - 1, featStart * steps, chainSettings, steps);
+                    if (edgeFeature.SolidInner)
+                    {
+                        // Inner face (faces the road): between the strip's inner top and base.
+                        DrawFittedPieces(mesh.InnerTop, mesh.InnerBase, arc, chain.Points, chain.Closed,
+                            featStart, featEnd - 1, featStart * steps, chainSettings, steps);
+                    }
+
+                    if (edgeFeature.SolidOuter)
+                    {
+                        // Outer face (away from the road): between the strip's outer top and base.
+                        DrawFittedPieces(mesh.OuterTop, mesh.OuterBase, arc, chain.Points, chain.Closed,
+                            featStart, featEnd - 1, featStart * steps, chainSettings, steps);
+                    }
+
                     continue;
                 }
 
                 FillTexturedStrip(mesh.InnerTop, mesh.OuterTop, arc, 0, mesh.InnerTop.Count - 1,
-                    chainFeature.Feature.Material, featureScale);
+                    featureMaterial, featureScale);
+                if (edgeFeature.SolidInner)
+                {
+                    FillTexturedStrip(mesh.InnerTop, mesh.InnerBase, arc, 0, mesh.InnerTop.Count - 1,
+                        featureMaterial, featureScale);
+                }
+
+                if (edgeFeature.SolidOuter)
+                {
+                    FillTexturedStrip(mesh.OuterTop, mesh.OuterBase, arc, 0, mesh.InnerTop.Count - 1,
+                        featureMaterial, featureScale);
+                }
             }
         }
 
@@ -1384,8 +1458,7 @@ public sealed class Viewport3D : Control
         if ((ModifierKeys & Keys.Shift) != 0)
         {
             // Shift+wheel tunes the fly speed instead of moving.
-            _flySpeed *= notches > 0 ? 1.25 : 1.0 / 1.25;
-            _flySpeed = Math.Max(100, Math.Min(200000, _flySpeed));
+            FlySpeed = _flySpeed * (notches > 0 ? 1.25 : 1.0 / 1.25);
         }
         else
         {
@@ -1448,7 +1521,7 @@ public sealed class Viewport3D : Control
             _autoTarget = false;
             if (!_flyTimer.Enabled)
             {
-                _lastMoveMs = Environment.TickCount64; // reset baseline so the first frame doesn't jump
+                _lastMoveSeconds = _clock.Elapsed.TotalSeconds; // reset baseline so the first frame doesn't jump
                 _flyTimer.Start();
             }
         }
@@ -1488,14 +1561,19 @@ public sealed class Viewport3D : Control
     private void ApplyFlyMovement()
     {
         // Refresh the baseline on every frame so a later key press can't inherit a huge dt.
-        long nowMs = Environment.TickCount64;
-        double dt = (nowMs - _lastMoveMs) / 1000.0;
-        _lastMoveMs = nowMs;
+        double now = _clock.Elapsed.TotalSeconds;
+        double dt = now - _lastMoveSeconds;
+        _lastMoveSeconds = now;
         if (dt <= 0.0)
         {
-            dt = _flyTimer.Interval / 1000.0;
+            // No measurable elapsed time: while right-drag "looking", mouse moves flood
+            // repaints faster than the clock ticked. Skip instead of assuming a full timer
+            // interval — summing the real dt over the burst still equals the wall-clock
+            // time, so the camera keeps its intended speed at any paint rate.
+            return;
         }
-        else if (dt > 0.25)
+
+        if (dt > 0.25)
         {
             dt = 0.25; // clamp after a long stall so the camera doesn't teleport
         }

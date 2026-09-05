@@ -34,7 +34,7 @@ public sealed partial class MainWindow : Form
     private readonly CheckBox _btnTextures = new CheckBox { Text = "Textures", Checked = false };
     private readonly CheckBox _btnLayoutGrid = new CheckBox { Text = "Layout grid", Checked = true };
     private readonly CheckBox _btnHideTools = new CheckBox { Text = "Hide tools", Checked = true };
-    private readonly CheckBox _chkRoadTextures = new CheckBox { Text = "Preview road textures", Checked = false };
+    private readonly CheckBox _chkRoadTextures = new CheckBox { Text = "Textures", Checked = false };
     private readonly ToolStripStatusLabel _statusMounted = new ToolStripStatusLabel();
     private bool _syncingGrid;
 
@@ -63,7 +63,7 @@ public sealed partial class MainWindow : Form
     // Material browser: a "…" browse button next to each material field. The fields are
     // read-only and open the browser when clicked, mirroring the Hammer material picker.
     private readonly Button _btnBrowseMaterial = new Button();
-    private readonly Button _btnBrowseFeatureMaterial = new Button();
+    private readonly Button _btnBrowseEdgeMaterial = new Button();
 
     private readonly Viewport3D _v3d = new Viewport3D();
     private readonly Viewport2D _top = new Viewport2D();
@@ -83,31 +83,31 @@ public sealed partial class MainWindow : Form
     private readonly Button _btnLayerDown = new Button();
     private readonly CheckBox _chkEnableJoining = new CheckBox();
 
-    private readonly ListBox _lstFeatures = new ListBox();
-    private readonly Button _btnAddFeature = new Button();
-    private readonly Button _btnRemoveFeature = new Button();
-    private readonly ComboBox _cboFeatureKind = new ComboBox();
-    private readonly ComboBox _cboFeatureSide = new ComboBox();
-    private readonly NumericUpDown _numFeatureOffset = new NumericUpDown();
-    private readonly NumericUpDown _numFeatureWidth = new NumericUpDown();
-    private readonly NumericUpDown _numFeatureBottomZ = new NumericUpDown();
-    private readonly NumericUpDown _numFeatureTopZ = new NumericUpDown();
-    private readonly NumericUpDown _numFeatureBank = new NumericUpDown();
-    private readonly CheckBox _chkFeatureIncOffset = new CheckBox();
-    private readonly CheckBox _chkFeatureIncWidth = new CheckBox();
-    private readonly CheckBox _chkFeatureIncBottomZ = new CheckBox();
-    private readonly CheckBox _chkFeatureIncTopZ = new CheckBox();
-    private readonly CheckBox _chkFeatureIncBank = new CheckBox();
-    private readonly NumericUpDown _numFeatureIncOffset = new NumericUpDown();
-    private readonly NumericUpDown _numFeatureIncWidth = new NumericUpDown();
-    private readonly NumericUpDown _numFeatureIncBottomZ = new NumericUpDown();
-    private readonly NumericUpDown _numFeatureIncTopZ = new NumericUpDown();
-    private readonly NumericUpDown _numFeatureIncBank = new NumericUpDown();
-    private readonly ListView _lstFeaturePoints = new ListView();
-    private readonly TextBox _txtFeatureMaterial = new TextBox();
-    private readonly CheckBox _chkFeatureBottom = new CheckBox();
-    private readonly CheckBox _chkFeatureInner = new CheckBox();
-    private readonly CheckBox _chkFeatureOuter = new CheckBox();
+    private readonly ListBox _lstEdges = new ListBox();
+    private readonly Button _btnAddEdge = new Button();
+    private readonly Button _btnRemoveEdge = new Button();
+    private readonly ComboBox _cboEdgeKind = new ComboBox();
+    private readonly ComboBox _cboEdgeSide = new ComboBox();
+    private readonly NumericUpDown _numEdgeOffset = new NumericUpDown();
+    private readonly NumericUpDown _numEdgeWidth = new NumericUpDown();
+    private readonly NumericUpDown _numEdgeBottomZ = new NumericUpDown();
+    private readonly NumericUpDown _numEdgeTopZ = new NumericUpDown();
+    private readonly NumericUpDown _numEdgeBank = new NumericUpDown();
+    private readonly CheckBox _chkEdgeIncOffset = new CheckBox();
+    private readonly CheckBox _chkEdgeIncWidth = new CheckBox();
+    private readonly CheckBox _chkEdgeIncBottomZ = new CheckBox();
+    private readonly CheckBox _chkEdgeIncTopZ = new CheckBox();
+    private readonly CheckBox _chkEdgeIncBank = new CheckBox();
+    private readonly NumericUpDown _numEdgeIncOffset = new NumericUpDown();
+    private readonly NumericUpDown _numEdgeIncWidth = new NumericUpDown();
+    private readonly NumericUpDown _numEdgeIncBottomZ = new NumericUpDown();
+    private readonly NumericUpDown _numEdgeIncTopZ = new NumericUpDown();
+    private readonly NumericUpDown _numEdgeIncBank = new NumericUpDown();
+    private readonly ListView _lstEdgePoints = new ListView();
+    private readonly TextBox _txtEdgeMaterial = new TextBox();
+    private readonly CheckBox _chkEdgeBottom = new CheckBox();
+    private readonly CheckBox _chkEdgeInner = new CheckBox();
+    private readonly CheckBox _chkEdgeOuter = new CheckBox();
 
     private readonly NumericUpDown _numX = new NumericUpDown();
     private readonly NumericUpDown _numY = new NumericUpDown();
@@ -117,6 +117,8 @@ public sealed partial class MainWindow : Form
     private readonly NumericUpDown _trackThickness = new NumericUpDown();
 
     private readonly NumericUpDown _numTexScale = new NumericUpDown();
+    // Current 3D fly speed shown in the toolbar readout (kept in sync via FlySpeedChanged).
+    private readonly ToolStripLabel _lblFlySpeed = new ToolStripLabel();
     private readonly ComboBox _cboLightmap = new ComboBox();
     private readonly ComboBox _cboSnap = new ComboBox();
     private readonly ComboBox _cboPower = new ComboBox();
@@ -231,7 +233,7 @@ public sealed partial class MainWindow : Form
 
         RefreshLayerList();
         LoadJoiningIntoControl();
-        RefreshFeatureList();
+        RefreshEdgeList();
         RefreshList();
         SelectPoint(0);
         FrameAll();
@@ -275,6 +277,33 @@ public sealed partial class MainWindow : Form
         _gridCombo.DropDownWidth = 90;
         topActionBar.Items.Add(new ToolStripLabel("Grid:"));
         topActionBar.Items.Add(_gridCombo);
+
+        // 3D freelook fly speed: plain text readout of the current camera speed. Not an
+        // editable/stepped field — you tune it in the 3D view with Shift+wheel (Frame All
+        // re-bases it too), and this readout just tracks it. Rendered as native ToolStrip
+        // labels so the text is vertically centred in the bar with no hosted-control padding.
+        // Right-aligned items lay out from the right edge in REVERSE add order, so the hint
+        // is added first (rightmost) and the label last (leftmost).
+        _lblFlySpeed.Text = ((int)Math.Round(_v3d.FlySpeed)).ToString("N0");
+        _lblFlySpeed.ForeColor = Color.Black;
+        _lblFlySpeed.Alignment = ToolStripItemAlignment.Right;
+        _lblFlySpeed.Margin = new Padding(6, 0, 0, 0);
+
+        topActionBar.Items.Add(new ToolStripLabel("Shift+wheel")
+        {
+            Alignment = ToolStripItemAlignment.Right,
+            ForeColor = Color.Black,
+            Font = new Font("Segoe UI", 7.5f),
+            Margin = new Padding(10, 0, 4, 0)
+        });
+        topActionBar.Items.Add(_lblFlySpeed);
+        topActionBar.Items.Add(new ToolStripLabel("Fly Speed:")
+        {
+            Alignment = ToolStripItemAlignment.Right,
+            ForeColor = Color.Black,
+            // Left margin pushes the whole right group away from the left-aligned items.
+            Margin = new Padding(24, 0, 0, 0)
+        });
 
         // Reference-world texturing / layout grid / hide-tools toggles moved out of the top
         // bar into the side panel's "Display" section (see BuildSidePanel).
@@ -509,14 +538,14 @@ public sealed partial class MainWindow : Form
             controlPointEditorRows.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         }
 
-        AddFeatureSettingRow(controlPointEditorRows, 0, "X", _numX, BuildFeatureIncrementCell(_chkIncX, _numIncX, followGrid: true, customValue: 64m));
-        AddFeatureSettingRow(controlPointEditorRows, 1, "Y", _numY, BuildFeatureIncrementCell(_chkIncY, _numIncY, followGrid: true, customValue: 64m));
-        AddFeatureSettingRow(controlPointEditorRows, 2, "Z", _numZ, BuildFeatureIncrementCell(_chkIncZ, _numIncZ, followGrid: true, customValue: 64m));
-        AddFeatureSettingRow(controlPointEditorRows, 3, "Width", _numWidth, BuildFeatureIncrementCell(_chkIncWidth, _numIncWidth, followGrid: true, customValue: 64m));
-        AddFeatureSettingRow(controlPointEditorRows, 4, "Bank", _numBank, BuildFeatureIncrementCell(_chkIncBank, _numIncBank, followGrid: false, customValue: 4m));
-        AddFeatureSettingRow(controlPointEditorRows, 5, "Thick", _trackThickness, BuildFeatureIncrementCell(_chkIncThickness, _numIncThickness, followGrid: true, customValue: 64m));
+        AddIncrementRow(controlPointEditorRows, 0, "X", _numX, BuildIncrementCell(_chkIncX, _numIncX, followGrid: true, customValue: 64m));
+        AddIncrementRow(controlPointEditorRows, 1, "Y", _numY, BuildIncrementCell(_chkIncY, _numIncY, followGrid: true, customValue: 64m));
+        AddIncrementRow(controlPointEditorRows, 2, "Z", _numZ, BuildIncrementCell(_chkIncZ, _numIncZ, followGrid: true, customValue: 64m));
+        AddIncrementRow(controlPointEditorRows, 3, "Width", _numWidth, BuildIncrementCell(_chkIncWidth, _numIncWidth, followGrid: true, customValue: 64m));
+        AddIncrementRow(controlPointEditorRows, 4, "Bank", _numBank, BuildIncrementCell(_chkIncBank, _numIncBank, followGrid: false, customValue: 4m));
+        AddIncrementRow(controlPointEditorRows, 5, "Thick", _trackThickness, BuildIncrementCell(_chkIncThickness, _numIncThickness, followGrid: true, customValue: 64m));
 
-        // AddFeatureSettingRow clamps numerics to 0..100000; restore the wider
+        // AddIncrementRow clamps numerics to 0..100000; restore the wider
         // point-value range (X/Y/Z/Bank can be negative, old editors allowed ±1,000,000).
         _numX.Minimum = -1000000; _numX.Maximum = 1000000;
         _numY.Minimum = -1000000; _numY.Maximum = 1000000;
@@ -529,14 +558,14 @@ public sealed partial class MainWindow : Form
         TableLayoutPanel roadSettingsInputs = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 138,
+            Height = 115,
             ColumnCount = 2,
-            RowCount = 6,
+            RowCount = 5,
             Padding = new Padding(0)
         };
         roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int r = 0; r < 6; r++)
+        for (int r = 0; r < 5; r++)
         {
             roadSettingsInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
         }
@@ -564,12 +593,6 @@ public sealed partial class MainWindow : Form
         _numTexScale.Increment = 0.25m;
         AddSettingRow(roadSettingsInputs, 3, "Lightmap scale", _cboLightmap);
         AddSettingRow(roadSettingsInputs, 4, "Grid snap", _cboSnap);
-
-        // Hammer face-edit "Fit" (Whole Face) per track: one full texture per exported
-        // face. When on, Texture scale is ignored for that track.
-        _chkFitTextures.Text = "Whole face (one per segment)";
-        _chkFitTextures.ForeColor = Color.LightGray;
-        AddSettingRow(roadSettingsInputs, 5, "Fit", _chkFitTextures);
 
         // Solid Roads + Enable track joining, directly under the point table.
         GroupBox solidRoadsSection = new GroupBox
@@ -735,17 +758,17 @@ public sealed partial class MainWindow : Form
 
         // Feature list + action buttons (+ Add / - Remove) in a vertical column on
         // the right, mirroring the track list in the Control Points section.
-        Panel featureListHost = new Panel
+        Panel edgeListHost = new Panel
         {
             Dock = DockStyle.Top,
             Height = 58,
             Padding = new Padding(0, 0, 0, 4)
         };
 
-        _lstFeatures.Dock = DockStyle.Fill;
-        _lstFeatures.IntegralHeight = false;
+        _lstEdges.Dock = DockStyle.Fill;
+        _lstEdges.IntegralHeight = false;
 
-        FlowLayoutPanel featureActionColumn = new FlowLayoutPanel
+        FlowLayoutPanel edgeActionColumn = new FlowLayoutPanel
         {
             Dock = DockStyle.Right,
             Width = 76,
@@ -755,37 +778,37 @@ public sealed partial class MainWindow : Form
             Padding = new Padding(0)
         };
 
-        _btnAddFeature.Text = "+ Add";
-        _btnAddFeature.AutoSize = false;
-        _btnAddFeature.Size = new Size(72, 24);
-        _btnAddFeature.Margin = new Padding(3, 0, 0, 3);
-        _btnRemoveFeature.Text = "- Remove";
-        _btnRemoveFeature.AutoSize = false;
-        _btnRemoveFeature.Size = new Size(72, 24);
-        _btnRemoveFeature.Margin = new Padding(3, 0, 0, 3);
-        StyleLayerButton(_btnAddFeature);
-        StyleLayerButton(_btnRemoveFeature);
+        _btnAddEdge.Text = "+ Add";
+        _btnAddEdge.AutoSize = false;
+        _btnAddEdge.Size = new Size(72, 24);
+        _btnAddEdge.Margin = new Padding(3, 0, 0, 3);
+        _btnRemoveEdge.Text = "- Remove";
+        _btnRemoveEdge.AutoSize = false;
+        _btnRemoveEdge.Size = new Size(72, 24);
+        _btnRemoveEdge.Margin = new Padding(3, 0, 0, 3);
+        StyleLayerButton(_btnAddEdge);
+        StyleLayerButton(_btnRemoveEdge);
 
-        featureActionColumn.Controls.Add(_btnAddFeature);
-        featureActionColumn.Controls.Add(_btnRemoveFeature);
+        edgeActionColumn.Controls.Add(_btnAddEdge);
+        edgeActionColumn.Controls.Add(_btnRemoveEdge);
 
         // Docking is in reverse z-order (last added docks first), so the action
         // column is added last to sit at the far right: [feature list | buttons].
-        featureListHost.Controls.Add(_lstFeatures);
-        featureListHost.Controls.Add(featureActionColumn);
+        edgeListHost.Controls.Add(_lstEdges);
+        edgeListHost.Controls.Add(edgeActionColumn);
 
-        _lstFeaturePoints.Dock = DockStyle.Fill;
-        _lstFeaturePoints.View = View.Details;
-        _lstFeaturePoints.FullRowSelect = true;
-        _lstFeaturePoints.MultiSelect = true;
-        _lstFeaturePoints.HeaderStyle = ColumnHeaderStyle.Nonclickable;
-        _lstFeaturePoints.Columns.Add("#", 34);
-        _lstFeaturePoints.Columns.Add("Width", 64);
-        _lstFeaturePoints.Columns.Add("Bottom Z", 68);
-        _lstFeaturePoints.Columns.Add("Top Z", 68);
-        _lstFeaturePoints.Columns.Add("Bank", 56);
+        _lstEdgePoints.Dock = DockStyle.Fill;
+        _lstEdgePoints.View = View.Details;
+        _lstEdgePoints.FullRowSelect = true;
+        _lstEdgePoints.MultiSelect = true;
+        _lstEdgePoints.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+        _lstEdgePoints.Columns.Add("#", 34);
+        _lstEdgePoints.Columns.Add("Width", 64);
+        _lstEdgePoints.Columns.Add("Bottom Z", 68);
+        _lstEdgePoints.Columns.Add("Top Z", 68);
+        _lstEdgePoints.Columns.Add("Bank", 56);
 
-        FlowLayoutPanel featureFaceToggleRow = new FlowLayoutPanel
+        FlowLayoutPanel edgeFaceToggleRow = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
             Height = 24,
@@ -793,24 +816,24 @@ public sealed partial class MainWindow : Form
             WrapContents = false
         };
 
-        _chkFeatureBottom.Text = "Bottom";
-        _chkFeatureBottom.AutoSize = true;
-        _chkFeatureBottom.ForeColor = Color.LightGray;
-        _chkFeatureBottom.Checked = true;
-        _chkFeatureInner.Text = "Inner";
-        _chkFeatureInner.AutoSize = true;
-        _chkFeatureInner.ForeColor = Color.LightGray;
-        _chkFeatureInner.Checked = true;
-        _chkFeatureOuter.Text = "Outer";
-        _chkFeatureOuter.AutoSize = true;
-        _chkFeatureOuter.ForeColor = Color.LightGray;
-        _chkFeatureOuter.Checked = true;
+        _chkEdgeBottom.Text = "Bottom";
+        _chkEdgeBottom.AutoSize = true;
+        _chkEdgeBottom.ForeColor = Color.LightGray;
+        _chkEdgeBottom.Checked = true;
+        _chkEdgeInner.Text = "Inner";
+        _chkEdgeInner.AutoSize = true;
+        _chkEdgeInner.ForeColor = Color.LightGray;
+        _chkEdgeInner.Checked = true;
+        _chkEdgeOuter.Text = "Outer";
+        _chkEdgeOuter.AutoSize = true;
+        _chkEdgeOuter.ForeColor = Color.LightGray;
+        _chkEdgeOuter.Checked = true;
 
-        featureFaceToggleRow.Controls.Add(_chkFeatureInner);
-        featureFaceToggleRow.Controls.Add(_chkFeatureOuter);
-        featureFaceToggleRow.Controls.Add(_chkFeatureBottom);
+        edgeFaceToggleRow.Controls.Add(_chkEdgeInner);
+        edgeFaceToggleRow.Controls.Add(_chkEdgeOuter);
+        edgeFaceToggleRow.Controls.Add(_chkEdgeBottom);
 
-        TableLayoutPanel featureInputs = new TableLayoutPanel
+        TableLayoutPanel edgeInputs = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
             Height = 192,
@@ -818,56 +841,67 @@ public sealed partial class MainWindow : Form
             RowCount = 8,
             Padding = new Padding(0)
         };
-        featureInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
-        featureInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
-        featureInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        edgeInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
+        edgeInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        edgeInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int r = 0; r < 8; r++)
         {
-            featureInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+            edgeInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         }
 
-        _cboFeatureKind.Items.AddRange(new object[] { "Sidewalk", "Guardrail" });
-        _cboFeatureKind.DropDownStyle = ComboBoxStyle.DropDownList;
-        _cboFeatureKind.SelectedIndex = 0;
+        _cboEdgeKind.Items.AddRange(new object[] { "Sidewalk", "Guardrail" });
+        _cboEdgeKind.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboEdgeKind.SelectedIndex = 0;
 
-        _cboFeatureSide.Items.AddRange(new object[] { "Left", "Right" });
-        _cboFeatureSide.DropDownStyle = ComboBoxStyle.DropDownList;
-        _cboFeatureSide.SelectedIndex = 0;
+        _cboEdgeSide.Items.AddRange(new object[] { "Left", "Right" });
+        _cboEdgeSide.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cboEdgeSide.SelectedIndex = 0;
 
         // Feature material field + its "…" browse button (clicking either opens the browser).
-        Control featureMaterialFieldHost = MakeMaterialFieldHost(_txtFeatureMaterial, _btnBrowseFeatureMaterial);
+        Control edgeMaterialFieldHost = MakeMaterialFieldHost(_txtEdgeMaterial, _btnBrowseEdgeMaterial);
 
   
-        AddFeatureSettingRow(featureInputs, 0, "Kind", _cboFeatureKind, null);
-        AddFeatureSettingRow(featureInputs, 1, "Side", _cboFeatureSide, null);
-        AddFeatureSettingRow(featureInputs, 2, "Material", featureMaterialFieldHost, null);
-        AddFeatureSettingRow(featureInputs, 3, "Offset", _numFeatureOffset, BuildFeatureIncrementCell(_chkFeatureIncOffset, _numFeatureIncOffset, followGrid: true, customValue: 64m));
-        AddFeatureSettingRow(featureInputs, 4, "Width", _numFeatureWidth, BuildFeatureIncrementCell(_chkFeatureIncWidth, _numFeatureIncWidth, followGrid: true, customValue: 64m));
-        AddFeatureSettingRow(featureInputs, 5, "Bank", _numFeatureBank, BuildFeatureIncrementCell(_chkFeatureIncBank, _numFeatureIncBank, followGrid: false, customValue: 4m));
-        AddFeatureSettingRow(featureInputs, 6, "Top Z", _numFeatureTopZ, BuildFeatureIncrementCell(_chkFeatureIncTopZ, _numFeatureIncTopZ, followGrid: true, customValue: 64m));
-        AddFeatureSettingRow(featureInputs, 7, "Bottom Z", _numFeatureBottomZ, BuildFeatureIncrementCell(_chkFeatureIncBottomZ, _numFeatureIncBottomZ, followGrid: true, customValue: 64m));
+        AddIncrementRow(edgeInputs, 0, "Kind", _cboEdgeKind, null);
+        AddIncrementRow(edgeInputs, 1, "Side", _cboEdgeSide, null);
+        AddIncrementRow(edgeInputs, 2, "Material", edgeMaterialFieldHost, null);
+        AddIncrementRow(edgeInputs, 3, "Offset", _numEdgeOffset, BuildIncrementCell(_chkEdgeIncOffset, _numEdgeIncOffset, followGrid: true, customValue: 64m));
+        AddIncrementRow(edgeInputs, 4, "Width", _numEdgeWidth, BuildIncrementCell(_chkEdgeIncWidth, _numEdgeIncWidth, followGrid: true, customValue: 64m));
+        AddIncrementRow(edgeInputs, 5, "Bank", _numEdgeBank, BuildIncrementCell(_chkEdgeIncBank, _numEdgeIncBank, followGrid: false, customValue: 4m));
+        AddIncrementRow(edgeInputs, 6, "Top Z", _numEdgeTopZ, BuildIncrementCell(_chkEdgeIncTopZ, _numEdgeIncTopZ, followGrid: true, customValue: 64m));
+        AddIncrementRow(edgeInputs, 7, "Bottom Z", _numEdgeBottomZ, BuildIncrementCell(_chkEdgeIncBottomZ, _numEdgeIncBottomZ, followGrid: true, customValue: 64m));
 
-        _numFeatureOffset.Minimum = -100000;
-        _numFeatureBottomZ.Minimum = -100000;
-        _numFeatureTopZ.Minimum = -100000;
-        _numFeatureBank.Minimum = -100000;
+        _numEdgeOffset.Minimum = -100000;
+        _numEdgeBottomZ.Minimum = -100000;
+        _numEdgeTopZ.Minimum = -100000;
+        _numEdgeBank.Minimum = -100000;
 
-        edgeFeaturesSection.Controls.Add(_lstFeaturePoints);
-        edgeFeaturesSection.Controls.Add(featureListHost);
-        edgeFeaturesSection.Controls.Add(featureFaceToggleRow);
-        edgeFeaturesSection.Controls.Add(featureInputs);
+        edgeFeaturesSection.Controls.Add(_lstEdgePoints);
+        edgeFeaturesSection.Controls.Add(edgeListHost);
+        edgeFeaturesSection.Controls.Add(edgeFaceToggleRow);
+        edgeFeaturesSection.Controls.Add(edgeInputs);
 
-        // "Display" column: the Textures / Layout grid / Hide tools toggles, moved out of the
-        // top action bar into their own boxed section.
+        // "Display" group with two subsections for the preview toggles:
+        // "Map" (the imported reference layout) and "Road" (the generated road).
         GroupBox displaySection = new GroupBox
         {
             Text = "Display",
             Dock = DockStyle.Top,
-            Height = 156,
+            Height = 202,
+            Padding = new Padding(4, 2, 4, 4),
+            ForeColor = Color.LightGray
+        };
+
+        // Map group: toggles for the imported layout (reference map) rendering —
+        // Textures (real game materials), Layout grid (wireframe), Hide tools (tool textures).
+        GroupBox mapSection = new GroupBox
+        {
+            Text = "Map",
+            Dock = DockStyle.Top,
+            Height = 100,
             Padding = new Padding(6, 2, 6, 6),
             ForeColor = Color.LightGray
         };
-        foreach (CheckBox chk in new[] { _btnTextures, _btnLayoutGrid, _btnHideTools, _chkRoadTextures })
+        foreach (CheckBox chk in new[] { _btnTextures, _btnLayoutGrid, _btnHideTools })
         {
             chk.Dock = DockStyle.Top;
             chk.AutoSize = false;
@@ -876,15 +910,42 @@ public sealed partial class MainWindow : Form
             chk.TextAlign = ContentAlignment.MiddleLeft;
         }
 
-        // The longer label is nudged to a smaller font so it fits the 135 px column.
-        _chkRoadTextures.Font = new Font("Segoe UI", 7.5f);
+        // Road group: toggles for the generated road (its textured preview). The Fit
+        // toggle (moved up from the road-settings row) drives the active track's Hammer
+        // whole-face texturing: checked → each segment shows exactly one full texture.
+        GroupBox roadSection = new GroupBox
+        {
+            Text = "Road",
+            Dock = DockStyle.Top,
+            Height = 74,
+            Padding = new Padding(6, 2, 6, 6),
+            ForeColor = Color.LightGray
+        };
+        _chkRoadTextures.Dock = DockStyle.Top;
+        _chkRoadTextures.AutoSize = false;
+        _chkRoadTextures.Height = 24;
+        _chkRoadTextures.ForeColor = Color.LightGray;
+        _chkRoadTextures.TextAlign = ContentAlignment.MiddleLeft;
+        _chkFitTextures.Text = "Fit";
+        _chkFitTextures.Dock = DockStyle.Top;
+        _chkFitTextures.AutoSize = false;
+        _chkFitTextures.Height = 24;
+        _chkFitTextures.ForeColor = Color.LightGray;
+        _chkFitTextures.TextAlign = ContentAlignment.MiddleLeft;
 
-        // Dock.Top children stack in reverse z-order (last added docks at the very top), so
-        // they are added bottom-first: Hide tools, Layout grid, Textures, Preview road textures.
-        displaySection.Controls.Add(_btnHideTools);
-        displaySection.Controls.Add(_btnLayoutGrid);
-        displaySection.Controls.Add(_btnTextures);
-        displaySection.Controls.Add(_chkRoadTextures);
+        // Map group's toggles are added bottom-first: Hide tools, Layout grid, Textures.
+        mapSection.Controls.Add(_btnHideTools);
+        mapSection.Controls.Add(_btnLayoutGrid);
+        mapSection.Controls.Add(_btnTextures);
+        // Road group's toggles stack top-first visually (last added docks at the top), so
+        // Fit is added before Textures to keep "Textures" on top with "Fit" under it.
+        roadSection.Controls.Add(_chkFitTextures);
+        roadSection.Controls.Add(_chkRoadTextures);
+
+        // Display children dock in reverse z-order (last added docks at the top): the Road
+        // group is added first so it sits below the Map group.
+        displaySection.Controls.Add(roadSection);
+        displaySection.Controls.Add(mapSection);
 
         Panel displayHost = new Panel
         {
@@ -1205,13 +1266,13 @@ public sealed partial class MainWindow : Form
     {
         Control[] darkTextInputs =
         {
-            _lstLayers, _list, _lstFeatures, _lstFeaturePoints,
+            _lstLayers, _list, _lstEdges, _lstEdgePoints,
             _numX, _numY, _numZ, _numWidth, _numBank, _trackThickness,
             _numTexScale, _cboPower, _cboSnap, _cboLightmap, _txtMaterial,
             _numIncX, _numIncY, _numIncZ, _numIncWidth, _numIncBank, _numIncThickness,
-            _numFeatureOffset, _numFeatureWidth, _numFeatureBottomZ, _numFeatureTopZ, _numFeatureBank,
-            _numFeatureIncOffset, _numFeatureIncWidth, _numFeatureIncBottomZ, _numFeatureIncTopZ, _numFeatureIncBank,
-            _cboFeatureKind, _cboFeatureSide, _txtFeatureMaterial
+            _numEdgeOffset, _numEdgeWidth, _numEdgeBottomZ, _numEdgeTopZ, _numEdgeBank,
+            _numEdgeIncOffset, _numEdgeIncWidth, _numEdgeIncBottomZ, _numEdgeIncTopZ, _numEdgeIncBank,
+            _cboEdgeKind, _cboEdgeSide, _txtEdgeMaterial
         };
         foreach (Control inputControl in darkTextInputs)
         {
@@ -1290,7 +1351,7 @@ public sealed partial class MainWindow : Form
         // later in WireEvents, so no handlers fire here yet.
         _loading = true;
         LoadIncrementsIntoControls();
-        LoadFeatureIncrementsIntoControls();
+        LoadEdgeIncrementsIntoControls();
         _loading = false;
         UpdateIncrements();
     }
@@ -1312,45 +1373,41 @@ public sealed partial class MainWindow : Form
         _numIncThickness.Value = (decimal)s.IncCustomThickness;
     }
 
-    private void LoadFeatureIncrementsIntoControls()
+    private void LoadEdgeIncrementsIntoControls()
     {
         RoadSettings s = _doc.Settings;
-        _chkFeatureIncOffset.Checked = s.FeatureIncUseGridOffset;
-        _chkFeatureIncWidth.Checked = s.FeatureIncUseGridWidth;
-        _chkFeatureIncBottomZ.Checked = s.FeatureIncUseGridBottomZ;
-        _chkFeatureIncTopZ.Checked = s.FeatureIncUseGridTopZ;
-        _chkFeatureIncBank.Checked = s.FeatureIncUseGridBank;
-        _numFeatureIncOffset.Value = (decimal)s.FeatureIncCustomOffset;
-        _numFeatureIncWidth.Value = (decimal)s.FeatureIncCustomWidth;
-        _numFeatureIncBottomZ.Value = (decimal)s.FeatureIncCustomBottomZ;
-        _numFeatureIncTopZ.Value = (decimal)s.FeatureIncCustomTopZ;
-        _numFeatureIncBank.Value = (decimal)s.FeatureIncCustomBank;
+        _chkEdgeIncOffset.Checked = s.EdgeIncUseGridOffset;
+        _chkEdgeIncWidth.Checked = s.EdgeIncUseGridWidth;
+        _chkEdgeIncBottomZ.Checked = s.EdgeIncUseGridBottomZ;
+        _chkEdgeIncTopZ.Checked = s.EdgeIncUseGridTopZ;
+        _chkEdgeIncBank.Checked = s.EdgeIncUseGridBank;
+        _numEdgeIncOffset.Value = (decimal)s.EdgeIncCustomOffset;
+        _numEdgeIncWidth.Value = (decimal)s.EdgeIncCustomWidth;
+        _numEdgeIncBottomZ.Value = (decimal)s.EdgeIncCustomBottomZ;
+        _numEdgeIncTopZ.Value = (decimal)s.EdgeIncCustomTopZ;
+        _numEdgeIncBank.Value = (decimal)s.EdgeIncCustomBank;
     }
 
     private void ApplyIncrementsFromControls()
     {
-        if (_loading)
+        ApplyCoalesced(() =>
         {
-            return;
-        }
+            RoadSettings settings = _doc.Settings;
+            settings.IncUseGridX = _chkIncX.Checked;
+            settings.IncUseGridY = _chkIncY.Checked;
+            settings.IncUseGridZ = _chkIncZ.Checked;
+            settings.IncUseGridWidth = _chkIncWidth.Checked;
+            settings.IncUseGridBank = _chkIncBank.Checked;
+            settings.IncCustomX = (double)_numIncX.Value;
+            settings.IncCustomY = (double)_numIncY.Value;
+            settings.IncCustomZ = (double)_numIncZ.Value;
+            settings.IncCustomWidth = (double)_numIncWidth.Value;
+            settings.IncCustomBank = (double)_numIncBank.Value;
+            settings.IncUseGridThickness = _chkIncThickness.Checked;
+            settings.IncCustomThickness = (double)_numIncThickness.Value;
 
-        _undo.BeginSession();
-        var s = _doc.Settings;
-        s.IncUseGridX = _chkIncX.Checked;
-        s.IncUseGridY = _chkIncY.Checked;
-        s.IncUseGridZ = _chkIncZ.Checked;
-        s.IncUseGridWidth = _chkIncWidth.Checked;
-        s.IncUseGridBank = _chkIncBank.Checked;
-        s.IncCustomX = (double)_numIncX.Value;
-        s.IncCustomY = (double)_numIncY.Value;
-        s.IncCustomZ = (double)_numIncZ.Value;
-        s.IncCustomWidth = (double)_numIncWidth.Value;
-        s.IncCustomBank = (double)_numIncBank.Value;
-        s.IncUseGridThickness = _chkIncThickness.Checked;
-        s.IncCustomThickness = (double)_numIncThickness.Value;
-
-        UpdateIncrements();
-        _doc.NotifyChanged();
+            UpdateIncrements();
+        });
     }
 
     private void UpdateIncrements()
@@ -1359,11 +1416,11 @@ public sealed partial class MainWindow : Form
 
         // Edge feature values follow the grid snap unless their own "Grid"
         // checkbox is unchecked, in which case the custom interval is used.
-        ApplyIncrement(_numFeatureOffset, _chkFeatureIncOffset, _numFeatureIncOffset, grid);
-        ApplyIncrement(_numFeatureWidth, _chkFeatureIncWidth, _numFeatureIncWidth, grid);
-        ApplyIncrement(_numFeatureBottomZ, _chkFeatureIncBottomZ, _numFeatureIncBottomZ, grid);
-        ApplyIncrement(_numFeatureTopZ, _chkFeatureIncTopZ, _numFeatureIncTopZ, grid);
-        ApplyIncrement(_numFeatureBank, _chkFeatureIncBank, _numFeatureIncBank, grid);
+        ApplyIncrement(_numEdgeOffset, _chkEdgeIncOffset, _numEdgeIncOffset, grid);
+        ApplyIncrement(_numEdgeWidth, _chkEdgeIncWidth, _numEdgeIncWidth, grid);
+        ApplyIncrement(_numEdgeBottomZ, _chkEdgeIncBottomZ, _numEdgeIncBottomZ, grid);
+        ApplyIncrement(_numEdgeTopZ, _chkEdgeIncTopZ, _numEdgeIncTopZ, grid);
+        ApplyIncrement(_numEdgeBank, _chkEdgeIncBank, _numEdgeIncBank, grid);
 
         ApplyIncrement(_numX, _chkIncX, _numIncX, grid);
         ApplyIncrement(_numY, _chkIncY, _numIncY, grid);
@@ -1373,28 +1430,24 @@ public sealed partial class MainWindow : Form
         ApplyIncrement(_trackThickness, _chkIncThickness, _numIncThickness, grid);
     }
 
-    private void ApplyFeatureIncrementsFromControls()
+    private void ApplyEdgeIncrementsFromControls()
     {
-        if (_loading)
+        ApplyCoalesced(() =>
         {
-            return;
-        }
+            RoadSettings settings = _doc.Settings;
+            settings.EdgeIncUseGridOffset = _chkEdgeIncOffset.Checked;
+            settings.EdgeIncUseGridWidth = _chkEdgeIncWidth.Checked;
+            settings.EdgeIncUseGridBottomZ = _chkEdgeIncBottomZ.Checked;
+            settings.EdgeIncUseGridTopZ = _chkEdgeIncTopZ.Checked;
+            settings.EdgeIncUseGridBank = _chkEdgeIncBank.Checked;
+            settings.EdgeIncCustomOffset = (double)_numEdgeIncOffset.Value;
+            settings.EdgeIncCustomWidth = (double)_numEdgeIncWidth.Value;
+            settings.EdgeIncCustomBottomZ = (double)_numEdgeIncBottomZ.Value;
+            settings.EdgeIncCustomTopZ = (double)_numEdgeIncTopZ.Value;
+            settings.EdgeIncCustomBank = (double)_numEdgeIncBank.Value;
 
-        _undo.BeginSession();
-        var s = _doc.Settings;
-        s.FeatureIncUseGridOffset = _chkFeatureIncOffset.Checked;
-        s.FeatureIncUseGridWidth = _chkFeatureIncWidth.Checked;
-        s.FeatureIncUseGridBottomZ = _chkFeatureIncBottomZ.Checked;
-        s.FeatureIncUseGridTopZ = _chkFeatureIncTopZ.Checked;
-        s.FeatureIncUseGridBank = _chkFeatureIncBank.Checked;
-        s.FeatureIncCustomOffset = (double)_numFeatureIncOffset.Value;
-        s.FeatureIncCustomWidth = (double)_numFeatureIncWidth.Value;
-        s.FeatureIncCustomBottomZ = (double)_numFeatureIncBottomZ.Value;
-        s.FeatureIncCustomTopZ = (double)_numFeatureIncTopZ.Value;
-        s.FeatureIncCustomBank = (double)_numFeatureIncBank.Value;
-
-        UpdateIncrements();
-        _doc.NotifyChanged();
+            UpdateIncrements();
+        });
     }
 
     // ---------------------------------------------------------------- events
@@ -1422,6 +1475,13 @@ public sealed partial class MainWindow : Form
         _top.SetDocument(_doc);
         _front.SetDocument(_doc);
         _side.SetDocument(_doc);
+
+        // Keep the toolbar fly-speed readout tracking the viewport's current speed (Shift+wheel
+        // tuning and Frame All change it internally, so the label must follow those too).
+        _v3d.FlySpeedChanged += (s, e) =>
+        {
+            _lblFlySpeed.Text = ((int)Math.Round(_v3d.FlySpeed)).ToString("N0");
+        };
 
         // Cordon wiring: the single shared box is pushed to every viewport (they draw it and
         // cull the imported layout against it), and the column controls drive its state. Any
@@ -1501,55 +1561,55 @@ public sealed partial class MainWindow : Form
         _btnLayerDown.Click += (s, e) => MoveLayer(1);
         _chkEnableJoining.CheckedChanged += (s, e) => ApplyJoiningFromControl();
 
-        _lstFeatures.SelectedIndexChanged += (s, e) => LoadFeatureIntoEditor();
-        _lstFeaturePoints.SelectedIndexChanged += (s, e) => LoadFeaturePointIntoEditors();
-        _btnAddFeature.Click += (s, e) => AddFeature();
-        _btnRemoveFeature.Click += (s, e) => RemoveFeature();
-        _cboFeatureKind.SelectedIndexChanged += (s, e) => ApplyFeatureFromEditor();
-        _cboFeatureSide.SelectedIndexChanged += (s, e) => ApplyFeatureFromEditor();
-        _numFeatureOffset.ValueChanged += (s, e) => ApplyFeatureFromEditor();
-        _numFeatureWidth.ValueChanged += (s, e) => ApplyFeaturePointFromEditor();
-        _numFeatureBottomZ.ValueChanged += (s, e) => ApplyFeaturePointFromEditor();
-        _numFeatureTopZ.ValueChanged += (s, e) => ApplyFeaturePointFromEditor();
-        _numFeatureBank.ValueChanged += (s, e) => ApplyFeaturePointFromEditor();
-        _txtFeatureMaterial.TextChanged += (s, e) => ApplyFeatureFromEditor();
-        _chkFeatureBottom.CheckedChanged += (s, e) => ApplyFeatureFromEditor();
-        _chkFeatureInner.CheckedChanged += (s, e) => ApplyFeatureFromEditor();
-        _chkFeatureOuter.CheckedChanged += (s, e) => ApplyFeatureFromEditor();
+        _lstEdges.SelectedIndexChanged += (s, e) => LoadFeatureIntoEditor();
+        _lstEdgePoints.SelectedIndexChanged += (s, e) => LoadEdgePointIntoEditors();
+        _btnAddEdge.Click += (s, e) => AddFeature();
+        _btnRemoveEdge.Click += (s, e) => RemoveFeature();
+        _cboEdgeKind.SelectedIndexChanged += (s, e) => ApplyEdgeFromEditor();
+        _cboEdgeSide.SelectedIndexChanged += (s, e) => ApplyEdgeFromEditor();
+        _numEdgeOffset.ValueChanged += (s, e) => ApplyEdgeFromEditor();
+        _numEdgeWidth.ValueChanged += (s, e) => ApplyEdgePointFromEditor();
+        _numEdgeBottomZ.ValueChanged += (s, e) => ApplyEdgePointFromEditor();
+        _numEdgeTopZ.ValueChanged += (s, e) => ApplyEdgePointFromEditor();
+        _numEdgeBank.ValueChanged += (s, e) => ApplyEdgePointFromEditor();
+        _txtEdgeMaterial.TextChanged += (s, e) => ApplyEdgeFromEditor();
+        _chkEdgeBottom.CheckedChanged += (s, e) => ApplyEdgeFromEditor();
+        _chkEdgeInner.CheckedChanged += (s, e) => ApplyEdgeFromEditor();
+        _chkEdgeOuter.CheckedChanged += (s, e) => ApplyEdgeFromEditor();
 
         // Feature increment/decrement interval controls (editor UI only).
-        _chkFeatureIncOffset.CheckedChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _chkFeatureIncWidth.CheckedChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _chkFeatureIncBottomZ.CheckedChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _chkFeatureIncTopZ.CheckedChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _chkFeatureIncBank.CheckedChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _numFeatureIncOffset.ValueChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _numFeatureIncWidth.ValueChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _numFeatureIncBottomZ.ValueChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _numFeatureIncTopZ.ValueChanged += (s, e) => ApplyFeatureIncrementsFromControls();
-        _numFeatureIncBank.ValueChanged += (s, e) => ApplyFeatureIncrementsFromControls();
+        _chkEdgeIncOffset.CheckedChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _chkEdgeIncWidth.CheckedChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _chkEdgeIncBottomZ.CheckedChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _chkEdgeIncTopZ.CheckedChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _chkEdgeIncBank.CheckedChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _numEdgeIncOffset.ValueChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _numEdgeIncWidth.ValueChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _numEdgeIncBottomZ.ValueChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _numEdgeIncTopZ.ValueChanged += (s, e) => ApplyEdgeIncrementsFromControls();
+        _numEdgeIncBank.ValueChanged += (s, e) => ApplyEdgeIncrementsFromControls();
 
-        AttachUndoBatch(_cboFeatureKind);
-        AttachUndoBatch(_cboFeatureSide);
-        AttachUndoBatch(_numFeatureOffset);
-        AttachUndoBatch(_numFeatureWidth);
-        AttachUndoBatch(_numFeatureBottomZ);
-        AttachUndoBatch(_numFeatureTopZ);
-        AttachUndoBatch(_numFeatureBank);
-        AttachUndoBatch(_txtFeatureMaterial);
-        AttachUndoBatch(_chkFeatureBottom);
-        AttachUndoBatch(_chkFeatureInner);
-        AttachUndoBatch(_chkFeatureOuter);
-        AttachUndoBatch(_chkFeatureIncOffset);
-        AttachUndoBatch(_chkFeatureIncWidth);
-        AttachUndoBatch(_chkFeatureIncBottomZ);
-        AttachUndoBatch(_chkFeatureIncTopZ);
-        AttachUndoBatch(_chkFeatureIncBank);
-        AttachUndoBatch(_numFeatureIncOffset);
-        AttachUndoBatch(_numFeatureIncWidth);
-        AttachUndoBatch(_numFeatureIncBottomZ);
-        AttachUndoBatch(_numFeatureIncTopZ);
-        AttachUndoBatch(_numFeatureIncBank);
+        AttachUndoBatch(_cboEdgeKind);
+        AttachUndoBatch(_cboEdgeSide);
+        AttachUndoBatch(_numEdgeOffset);
+        AttachUndoBatch(_numEdgeWidth);
+        AttachUndoBatch(_numEdgeBottomZ);
+        AttachUndoBatch(_numEdgeTopZ);
+        AttachUndoBatch(_numEdgeBank);
+        AttachUndoBatch(_txtEdgeMaterial);
+        AttachUndoBatch(_chkEdgeBottom);
+        AttachUndoBatch(_chkEdgeInner);
+        AttachUndoBatch(_chkEdgeOuter);
+        AttachUndoBatch(_chkEdgeIncOffset);
+        AttachUndoBatch(_chkEdgeIncWidth);
+        AttachUndoBatch(_chkEdgeIncBottomZ);
+        AttachUndoBatch(_chkEdgeIncTopZ);
+        AttachUndoBatch(_chkEdgeIncBank);
+        AttachUndoBatch(_numEdgeIncOffset);
+        AttachUndoBatch(_numEdgeIncWidth);
+        AttachUndoBatch(_numEdgeIncBottomZ);
+        AttachUndoBatch(_numEdgeIncTopZ);
+        AttachUndoBatch(_numEdgeIncBank);
 
         _numX.ValueChanged += (s, e) => UpdatePointFromEditors();
         _numY.ValueChanged += (s, e) => UpdatePointFromEditors();
@@ -1563,16 +1623,16 @@ public sealed partial class MainWindow : Form
         _numTexScale.ValueChanged += (s, e) => ApplySettingsFromControls();
         _cboLightmap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _cboSnap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
-        _chkFitTextures.CheckedChanged += (s, e) => ApplySettingsFromControls();
+        _chkFitTextures.CheckedChanged += (s, e) => ApplyCoalesced(() => _doc.Settings.FitTextures = _chkFitTextures.Checked);
         _gridCombo.SelectedIndexChanged += (s, e) => ApplyGridCombo();
         _btnSnap.CheckedChanged += (s, e) => ApplySnapToggle();
         _btnTextures.CheckedChanged += (s, e) => ApplyTexturesToggle();
         _chkRoadTextures.CheckedChanged += (s, e) => ApplyRoadTexturesToggle();
         _btnLayoutGrid.CheckedChanged += (s, e) => ApplyLayoutGridToggle();
         _btnHideTools.CheckedChanged += (s, e) => ApplyHideToolsToggle();
-        _chkSolidLeft.CheckedChanged += (s, e) => ApplySettingsFromControls();
-        _chkSolidRight.CheckedChanged += (s, e) => ApplySettingsFromControls();
-        _chkSolidBottom.CheckedChanged += (s, e) => ApplySettingsFromControls();
+        _chkSolidLeft.CheckedChanged += (s, e) => ApplyCoalesced(() => _doc.Settings.SolidLeft = _chkSolidLeft.Checked);
+        _chkSolidRight.CheckedChanged += (s, e) => ApplyCoalesced(() => _doc.Settings.SolidRight = _chkSolidRight.Checked);
+        _chkSolidBottom.CheckedChanged += (s, e) => ApplyCoalesced(() => _doc.Settings.SolidBottom = _chkSolidBottom.Checked);
 
         _chkShowDisps.CheckedChanged += (s, e) =>
         {
@@ -1585,10 +1645,10 @@ public sealed partial class MainWindow : Form
 
         _chkShowSidewalkDisps.CheckedChanged += (s, e) =>
         {
-            _v3d.ShowFeatureSegments = _chkShowSidewalkDisps.Checked;
-            _top.ShowFeatureSegments = _chkShowSidewalkDisps.Checked;
-            _front.ShowFeatureSegments = _chkShowSidewalkDisps.Checked;
-            _side.ShowFeatureSegments = _chkShowSidewalkDisps.Checked;
+            _v3d.ShowEdgeSegments = _chkShowSidewalkDisps.Checked;
+            _top.ShowEdgeSegments = _chkShowSidewalkDisps.Checked;
+            _front.ShowEdgeSegments = _chkShowSidewalkDisps.Checked;
+            _side.ShowEdgeSegments = _chkShowSidewalkDisps.Checked;
             InvalidateAll();
         };
 
@@ -1637,8 +1697,8 @@ public sealed partial class MainWindow : Form
         // increments), so editing one point then another stays as separate undo steps.
         AttachUndoBatch(_lstLayers);
         AttachUndoBatch(_list);
-        AttachUndoBatch(_lstFeatures);
-        AttachUndoBatch(_lstFeaturePoints);
+        AttachUndoBatch(_lstEdges);
+        AttachUndoBatch(_lstEdgePoints);
     }
 
     // ---------------------------------------------------------------- data
@@ -1975,7 +2035,7 @@ public sealed partial class MainWindow : Form
         RefreshLayerList();
         LoadSettingsIntoControls();
         LoadJoiningIntoControl();
-        RefreshFeatureList();
+        RefreshEdgeList();
         RefreshList();
         _selectedIndex = -1;
         if (_doc.Points.Count > 0)
@@ -2052,45 +2112,42 @@ public sealed partial class MainWindow : Form
 
     private void ApplyJoiningFromControl()
     {
-        if (_loading || _doc.ActiveTrack == null)
+        if (_doc.ActiveTrack == null)
         {
             return;
         }
 
-        _undo.BeginChange();
-        _doc.ActiveTrack.EnableJoining = _chkEnableJoining.Checked;
-        _doc.NotifyChanged();
-        UpdateUndoButtons();
+        ApplyCoalesced(() => _doc.ActiveTrack.EnableJoining = _chkEnableJoining.Checked);
     }
 
-    private void RefreshFeatureList()
+    private void RefreshEdgeList()
     {
         _loading = true;
-        int selected = _lstFeatures.SelectedIndex;
-        _lstFeatures.BeginUpdate();
-        _lstFeatures.Items.Clear();
+        int selected = _lstEdges.SelectedIndex;
+        _lstEdges.BeginUpdate();
+        _lstEdges.Items.Clear();
 
         Track activeTrack = _doc.ActiveTrack;
         if (activeTrack != null)
         {
             foreach (EdgeFeature feature in activeTrack.EdgeFeatures)
             {
-                _lstFeatures.Items.Add(FeatureSummary(feature));
+                _lstEdges.Items.Add(EdgeSummary(feature));
             }
         }
 
-        if (selected >= 0 && selected < _lstFeatures.Items.Count)
+        if (selected >= 0 && selected < _lstEdges.Items.Count)
         {
-            _lstFeatures.SelectedIndex = selected;
+            _lstEdges.SelectedIndex = selected;
         }
-        else if (_lstFeatures.Items.Count > 0)
+        else if (_lstEdges.Items.Count > 0)
         {
             // Nothing valid was selected (e.g. a feature was restored by undo), so
             // fall back to the first feature instead of leaving the editor empty.
-            _lstFeatures.SelectedIndex = 0;
+            _lstEdges.SelectedIndex = 0;
         }
 
-        _lstFeatures.EndUpdate();
+        _lstEdges.EndUpdate();
         _loading = false;
         LoadFeatureIntoEditor();
     }
@@ -2109,24 +2166,24 @@ public sealed partial class MainWindow : Form
             return;
         }
 
-        int index = _lstFeatures.SelectedIndex;
+        int index = _lstEdges.SelectedIndex;
         if (index < 0 || index >= activeTrack.EdgeFeatures.Count)
         {
             // No feature selected (e.g. after undoing "Add"): clear the editor so
             // stale values don't linger in the controls.
             _loading = true;
-            _cboFeatureKind.SelectedIndex = 0;
-            _cboFeatureSide.SelectedIndex = 0;
-            _numFeatureOffset.Value = 0;
-            _numFeatureWidth.Value = 0;
-            _numFeatureBottomZ.Value = 0;
-            _numFeatureTopZ.Value = 0;
-            _numFeatureBank.Value = 0;
-            _txtFeatureMaterial.Text = string.Empty;
-            _chkFeatureBottom.Checked = true;
-            _chkFeatureInner.Checked = true;
-            _chkFeatureOuter.Checked = true;
-            _lstFeaturePoints.Items.Clear();
+            _cboEdgeKind.SelectedIndex = 0;
+            _cboEdgeSide.SelectedIndex = 0;
+            _numEdgeOffset.Value = 0;
+            _numEdgeWidth.Value = 0;
+            _numEdgeBottomZ.Value = 0;
+            _numEdgeTopZ.Value = 0;
+            _numEdgeBank.Value = 0;
+            _txtEdgeMaterial.Text = string.Empty;
+            _chkEdgeBottom.Checked = true;
+            _chkEdgeInner.Checked = true;
+            _chkEdgeOuter.Checked = true;
+            _lstEdgePoints.Items.Clear();
             _loading = false;
             UpdateFeatureEditorEnabled();
             return;
@@ -2135,24 +2192,24 @@ public sealed partial class MainWindow : Form
         EdgeFeature feature = activeTrack.EdgeFeatures[index];
 
         _loading = true;
-        _cboFeatureKind.SelectedIndex = (int)feature.Kind;
-        _cboFeatureSide.SelectedIndex = feature.LeftSide ? 0 : 1;
-        _numFeatureOffset.Value = (decimal)feature.Offset;
-        _txtFeatureMaterial.Text = feature.Material;
-        _chkFeatureBottom.Checked = feature.SolidBottom;
-        _chkFeatureInner.Checked = feature.SolidInner;
-        _chkFeatureOuter.Checked = feature.SolidOuter;
+        _cboEdgeKind.SelectedIndex = (int)feature.Kind;
+        _cboEdgeSide.SelectedIndex = feature.LeftSide ? 0 : 1;
+        _numEdgeOffset.Value = (decimal)feature.Offset;
+        _txtEdgeMaterial.Text = feature.Material;
+        _chkEdgeBottom.Checked = feature.SolidBottom;
+        _chkEdgeInner.Checked = feature.SolidInner;
+        _chkEdgeOuter.Checked = feature.SolidOuter;
         _loading = false;
 
-        RefreshFeaturePointTable(feature);
-        LoadFeaturePointIntoEditors();
+        RefreshEdgePointTable(feature);
+        LoadEdgePointIntoEditors();
         UpdateFeatureEditorEnabled();
     }
 
-    private void RefreshFeaturePointTable(EdgeFeature feature)
+    private void RefreshEdgePointTable(EdgeFeature feature)
     {
-        _lstFeaturePoints.BeginUpdate();
-        _lstFeaturePoints.Items.Clear();
+        _lstEdgePoints.BeginUpdate();
+        _lstEdgePoints.Items.Clear();
 
         for (int pointIndex = 0; pointIndex < feature.Points.Count; pointIndex++)
         {
@@ -2162,33 +2219,33 @@ public sealed partial class MainWindow : Form
             row.SubItems.Add(point.BottomOffset.ToString("0.##"));
             row.SubItems.Add(point.TopOffset.ToString("0.##"));
             row.SubItems.Add(point.BankDegrees.ToString("0.##"));
-            _lstFeaturePoints.Items.Add(row);
+            _lstEdgePoints.Items.Add(row);
         }
 
-        if (_lstFeaturePoints.Items.Count > 0)
+        if (_lstEdgePoints.Items.Count > 0)
         {
-            _lstFeaturePoints.SelectedIndices.Clear();
-            _lstFeaturePoints.SelectedIndices.Add(0);
+            _lstEdgePoints.SelectedIndices.Clear();
+            _lstEdgePoints.SelectedIndices.Add(0);
         }
 
-        _lstFeaturePoints.EndUpdate();
+        _lstEdgePoints.EndUpdate();
     }
 
-    private void LoadFeaturePointIntoEditors()
+    private void LoadEdgePointIntoEditors()
     {
         if (_loading || _doc.ActiveTrack == null)
         {
             return;
         }
 
-        int featureIndex = _lstFeatures.SelectedIndex;
+        int featureIndex = _lstEdges.SelectedIndex;
         if (featureIndex < 0 || featureIndex >= _doc.ActiveTrack.EdgeFeatures.Count)
         {
             return;
         }
 
         EdgeFeature feature = _doc.ActiveTrack.EdgeFeatures[featureIndex];
-        int pointIndex = _lstFeaturePoints.SelectedIndices.Count > 0 ? _lstFeaturePoints.SelectedIndices[0] : -1;
+        int pointIndex = _lstEdgePoints.SelectedIndices.Count > 0 ? _lstEdgePoints.SelectedIndices[0] : -1;
         if (pointIndex < 0 || pointIndex >= feature.Points.Count)
         {
             return;
@@ -2196,21 +2253,21 @@ public sealed partial class MainWindow : Form
 
         EdgeFeaturePoint point = feature.Points[pointIndex];
         _loading = true;
-        _numFeatureWidth.Value = (decimal)point.Width;
-        _numFeatureBottomZ.Value = (decimal)point.BottomOffset;
-        _numFeatureTopZ.Value = (decimal)point.TopOffset;
-        _numFeatureBank.Value = (decimal)point.BankDegrees;
+        _numEdgeWidth.Value = (decimal)point.Width;
+        _numEdgeBottomZ.Value = (decimal)point.BottomOffset;
+        _numEdgeTopZ.Value = (decimal)point.TopOffset;
+        _numEdgeBank.Value = (decimal)point.BankDegrees;
         _loading = false;
     }
 
-    private void ApplyFeatureFromEditor()
+    private void ApplyEdgeFromEditor()
     {
         if (_loading || _doc.ActiveTrack == null)
         {
             return;
         }
 
-        int index = _lstFeatures.SelectedIndex;
+        int index = _lstEdges.SelectedIndex;
         if (index < 0 || index >= _doc.ActiveTrack.EdgeFeatures.Count)
         {
             return;
@@ -2218,33 +2275,33 @@ public sealed partial class MainWindow : Form
 
         _undo.BeginChange();
         EdgeFeature feature = _doc.ActiveTrack.EdgeFeatures[index];
-        feature.Kind = (EdgeFeatureKind)_cboFeatureKind.SelectedIndex;
-        feature.LeftSide = _cboFeatureSide.SelectedIndex == 0;
-        feature.Offset = (double)_numFeatureOffset.Value;
-        feature.Material = _txtFeatureMaterial.Text;
-        feature.SolidBottom = _chkFeatureBottom.Checked;
-        feature.SolidInner = _chkFeatureInner.Checked;
-        feature.SolidOuter = _chkFeatureOuter.Checked;
+        feature.Kind = (EdgeFeatureKind)_cboEdgeKind.SelectedIndex;
+        feature.LeftSide = _cboEdgeSide.SelectedIndex == 0;
+        feature.Offset = (double)_numEdgeOffset.Value;
+        feature.Material = _txtEdgeMaterial.Text;
+        feature.SolidBottom = _chkEdgeBottom.Checked;
+        feature.SolidInner = _chkEdgeInner.Checked;
+        feature.SolidOuter = _chkEdgeOuter.Checked;
 
-        _lstFeatures.Items[index] = FeatureSummary(feature);
+        _lstEdges.Items[index] = EdgeSummary(feature);
         _doc.NotifyChanged();
     }
 
-    private void ApplyFeaturePointFromEditor()
+    private void ApplyEdgePointFromEditor()
     {
         if (_loading || _doc.ActiveTrack == null)
         {
             return;
         }
 
-        int featureIndex = _lstFeatures.SelectedIndex;
+        int featureIndex = _lstEdges.SelectedIndex;
         if (featureIndex < 0 || featureIndex >= _doc.ActiveTrack.EdgeFeatures.Count)
         {
             return;
         }
 
         EdgeFeature feature = _doc.ActiveTrack.EdgeFeatures[featureIndex];
-        List<int> selected = SelectedFeaturePointIndices();
+        List<int> selected = SelectedEdgePointIndices();
         if (selected.Count == 0)
         {
             return;
@@ -2254,10 +2311,10 @@ public sealed partial class MainWindow : Form
 
         // Width/bottom/top/bank are applied as absolute values across the whole
         // selection, matching the road point editor's width/bank behaviour.
-        double width = (double)_numFeatureWidth.Value;
-        double bottom = (double)_numFeatureBottomZ.Value;
-        double top = (double)_numFeatureTopZ.Value;
-        double bank = (double)_numFeatureBank.Value;
+        double width = (double)_numEdgeWidth.Value;
+        double bottom = (double)_numEdgeBottomZ.Value;
+        double top = (double)_numEdgeTopZ.Value;
+        double bank = (double)_numEdgeBank.Value;
 
         foreach (int pointIndex in selected)
         {
@@ -2272,7 +2329,7 @@ public sealed partial class MainWindow : Form
             point.TopOffset = top;
             point.BankDegrees = bank;
 
-            ListViewItem row = _lstFeaturePoints.Items[pointIndex];
+            ListViewItem row = _lstEdgePoints.Items[pointIndex];
             row.SubItems[1].Text = point.Width.ToString("0.##");
             row.SubItems[2].Text = point.BottomOffset.ToString("0.##");
             row.SubItems[3].Text = point.TopOffset.ToString("0.##");
@@ -2282,10 +2339,10 @@ public sealed partial class MainWindow : Form
         _doc.NotifyChanged();
     }
 
-    private List<int> SelectedFeaturePointIndices()
+    private List<int> SelectedEdgePointIndices()
     {
         List<int> result = new List<int>();
-        foreach (int index in _lstFeaturePoints.SelectedIndices)
+        foreach (int index in _lstEdgePoints.SelectedIndices)
         {
             result.Add(index);
         }
@@ -2303,7 +2360,7 @@ public sealed partial class MainWindow : Form
             return false;
         }
 
-        int index = _lstFeatures.SelectedIndex;
+        int index = _lstEdges.SelectedIndex;
         return index >= 0 && index < activeTrack.EdgeFeatures.Count;
     }
 
@@ -2314,35 +2371,35 @@ public sealed partial class MainWindow : Form
     {
         bool enabled = HasSelectedFeature();
 
-        _numFeatureOffset.Enabled = enabled;
-        _numFeatureWidth.Enabled = enabled;
-        _numFeatureBottomZ.Enabled = enabled;
-        _numFeatureTopZ.Enabled = enabled;
-        _numFeatureBank.Enabled = enabled;
-        _txtFeatureMaterial.Enabled = enabled;
-        _btnBrowseFeatureMaterial.Enabled = enabled;
-        _chkFeatureBottom.Enabled = enabled;
-        _chkFeatureInner.Enabled = enabled;
-        _chkFeatureOuter.Enabled = enabled;
+        _numEdgeOffset.Enabled = enabled;
+        _numEdgeWidth.Enabled = enabled;
+        _numEdgeBottomZ.Enabled = enabled;
+        _numEdgeTopZ.Enabled = enabled;
+        _numEdgeBank.Enabled = enabled;
+        _txtEdgeMaterial.Enabled = enabled;
+        _btnBrowseEdgeMaterial.Enabled = enabled;
+        _chkEdgeBottom.Enabled = enabled;
+        _chkEdgeInner.Enabled = enabled;
+        _chkEdgeOuter.Enabled = enabled;
 
-        _chkFeatureIncOffset.Enabled = enabled;
-        _chkFeatureIncWidth.Enabled = enabled;
-        _chkFeatureIncBottomZ.Enabled = enabled;
-        _chkFeatureIncTopZ.Enabled = enabled;
-        _chkFeatureIncBank.Enabled = enabled;
-        _numFeatureIncOffset.Enabled = enabled;
-        _numFeatureIncWidth.Enabled = enabled;
-        _numFeatureIncBottomZ.Enabled = enabled;
-        _numFeatureIncTopZ.Enabled = enabled;
-        _numFeatureIncBank.Enabled = enabled;
+        _chkEdgeIncOffset.Enabled = enabled;
+        _chkEdgeIncWidth.Enabled = enabled;
+        _chkEdgeIncBottomZ.Enabled = enabled;
+        _chkEdgeIncTopZ.Enabled = enabled;
+        _chkEdgeIncBank.Enabled = enabled;
+        _numEdgeIncOffset.Enabled = enabled;
+        _numEdgeIncWidth.Enabled = enabled;
+        _numEdgeIncBottomZ.Enabled = enabled;
+        _numEdgeIncTopZ.Enabled = enabled;
+        _numEdgeIncBank.Enabled = enabled;
 
-        _lstFeaturePoints.Enabled = enabled;
-        _btnRemoveFeature.Enabled = enabled;
+        _lstEdgePoints.Enabled = enabled;
+        _btnRemoveEdge.Enabled = enabled;
 
         // Kind, Side and "+ Add" are always usable.
-        _cboFeatureKind.Enabled = true;
-        _cboFeatureSide.Enabled = true;
-        _btnAddFeature.Enabled = _doc.ActiveTrack != null;
+        _cboEdgeKind.Enabled = true;
+        _cboEdgeSide.Enabled = true;
+        _btnAddEdge.Enabled = _doc.ActiveTrack != null;
     }
 
     private void AddFeature()
@@ -2355,8 +2412,8 @@ public sealed partial class MainWindow : Form
         _undo.RecordSingle();
         EdgeFeature feature = new EdgeFeature
         {
-            Kind = (EdgeFeatureKind)_cboFeatureKind.SelectedIndex,
-            LeftSide = _cboFeatureSide.SelectedIndex == 0
+            Kind = (EdgeFeatureKind)_cboEdgeKind.SelectedIndex,
+            LeftSide = _cboEdgeSide.SelectedIndex == 0
         };
         double topOffset = _doc.ActiveTrack.Settings.Snap > 0 ? _doc.ActiveTrack.Settings.Snap : 64;
         foreach (RoadPoint roadPoint in _doc.ActiveTrack.Points)
@@ -2367,12 +2424,12 @@ public sealed partial class MainWindow : Form
         _doc.ActiveTrack.EdgeFeatures.Add(feature);
         _doc.NotifyChanged();
 
-        RefreshFeatureList();
-        _lstFeatures.SelectedIndex = _lstFeatures.Items.Count - 1;
+        RefreshEdgeList();
+        _lstEdges.SelectedIndex = _lstEdges.Items.Count - 1;
         UpdateUndoButtons();
     }
 
-    private void SyncFeaturePointsToTrack()
+    private void SyncEdgePointsToTrack()
     {
         Track activeTrack = _doc.ActiveTrack;
         if (activeTrack == null)
@@ -2411,7 +2468,7 @@ public sealed partial class MainWindow : Form
             return;
         }
 
-        int index = _lstFeatures.SelectedIndex;
+        int index = _lstEdges.SelectedIndex;
         if (index < 0 || index >= _doc.ActiveTrack.EdgeFeatures.Count)
         {
             return;
@@ -2420,7 +2477,7 @@ public sealed partial class MainWindow : Form
         _undo.RecordSingle();
         _doc.ActiveTrack.EdgeFeatures.RemoveAt(index);
         _doc.NotifyChanged();
-        RefreshFeatureList();
+        RefreshEdgeList();
         UpdateUndoButtons();
     }
 
@@ -2430,7 +2487,7 @@ public sealed partial class MainWindow : Form
         RefreshList();
         LoadSettingsIntoControls();
         LoadJoiningIntoControl();
-        RefreshFeatureList();
+        RefreshEdgeList();
         LoadPointIntoEditors();
 
         if (_doc.Points.Count > 0)
@@ -2736,7 +2793,7 @@ public sealed partial class MainWindow : Form
         RoadPoint last = _doc.Points.Count > 0 ? _doc.Points[_doc.Points.Count - 1] : new RoadPoint(Vec3.Zero, 256, 0);
         RoadPoint p = new RoadPoint(last.Position + new Vec3(256, 0, 0), last.Width, last.BankDegrees, last.Thickness);
         _doc.Points.Add(p);
-        SyncFeaturePointsToTrack();
+        SyncEdgePointsToTrack();
         _doc.NotifyChanged();
         RefreshList();
         SelectPoint(_doc.Points.Count - 1);
@@ -2784,7 +2841,7 @@ public sealed partial class MainWindow : Form
             _doc.Points.RemoveAt(selected[k]);
         }
 
-        SyncFeaturePointsToTrack();
+        SyncEdgePointsToTrack();
 
         _selectedIndex = -1;
         _doc.NotifyChanged();
@@ -2870,7 +2927,7 @@ public sealed partial class MainWindow : Form
 
     private void OnViewPointAdded(int index)
     {
-        SyncFeaturePointsToTrack();
+        SyncEdgePointsToTrack();
         RefreshList();
         SelectPoint(index);
         UpdateUndoButtons();
@@ -3078,7 +3135,7 @@ public sealed partial class MainWindow : Form
         _selectedIndex = -1;
         LoadSettingsIntoControls();
         LoadJoiningIntoControl();
-        RefreshFeatureList();
+        RefreshEdgeList();
         RefreshList();
 
         // Re-select the same points. Out-of-range indices are ignored, which is
@@ -3125,6 +3182,23 @@ public sealed partial class MainWindow : Form
         };
     }
 
+    /// <summary>Applies a checkbox/toggle (or other focus-less control) edit as a coalescing
+    /// undo session — the shared pattern behind the increment "Grid" boxes and the Solid/Fit
+    /// toggles. Consecutive changes merge into one session, and one that returns to its
+    /// starting state is discarded by UndoManager (no phantom undo entry). Wire each toggle
+    /// as <c>ApplyCoalesced(() => _doc.Settings.X = control.Checked)</c>.</summary>
+    private void ApplyCoalesced(Action mutate)
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        _undo.BeginSession();
+        mutate();
+        _doc.NotifyChanged();
+    }
+
     private void ApplySettingsFromControls()
     {
         if (_loading)
@@ -3139,10 +3213,6 @@ public sealed partial class MainWindow : Form
         settings.TextureScale = (double)_numTexScale.Value;
         settings.LightmapScale = (int)_cboLightmap.SelectedItem;
         settings.Snap = (int)_cboSnap.SelectedItem;
-        settings.FitTextures = _chkFitTextures.Checked;
-        settings.SolidLeft = _chkSolidLeft.Checked;
-        settings.SolidRight = _chkSolidRight.Checked;
-        settings.SolidBottom = _chkSolidBottom.Checked;
         SyncGridCombo();
         UpdateIncrements();
         _doc.NotifyChanged();
@@ -3370,33 +3440,33 @@ public sealed partial class MainWindow : Form
 
         CaptureEditorValues();
         _loading = false;
-        SyncFeaturePointSelection();
+        SyncEdgePointSelection();
     }
 
     /// <summary>Mirror the selected control points onto the open feature's point
     /// table, so picking a track point also highlights the matching sidewalk point
     /// and loads its values into the feature editor. Feature points are indexed the
     /// same as track control points, so row i maps straight to track point i.</summary>
-    private void SyncFeaturePointSelection()
+    private void SyncEdgePointSelection()
     {
-        if (_lstFeaturePoints == null || _doc.ActiveTrack == null)
+        if (_lstEdgePoints == null || _doc.ActiveTrack == null)
         {
             return;
         }
 
         List<int> selected = SelectedIndices();
         _loading = true;
-        _lstFeaturePoints.SelectedIndices.Clear();
+        _lstEdgePoints.SelectedIndices.Clear();
         foreach (int index in selected)
         {
-            if (index >= 0 && index < _lstFeaturePoints.Items.Count)
+            if (index >= 0 && index < _lstEdgePoints.Items.Count)
             {
-                _lstFeaturePoints.SelectedIndices.Add(index);
+                _lstEdgePoints.SelectedIndices.Add(index);
             }
         }
 
         _loading = false;
-        LoadFeaturePointIntoEditors();
+        LoadEdgePointIntoEditors();
     }
 
     private void LoadSettingsIntoControls()
@@ -3416,7 +3486,7 @@ public sealed partial class MainWindow : Form
         _chkSolidRight.Checked = settings.SolidRight;
         _chkSolidBottom.Checked = settings.SolidBottom;
         LoadIncrementsIntoControls();
-        LoadFeatureIncrementsIntoControls();
+        LoadEdgeIncrementsIntoControls();
         _loading = false;
         UpdateIncrements();
     }

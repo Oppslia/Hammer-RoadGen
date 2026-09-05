@@ -198,16 +198,16 @@ public sealed class UndoManager
                 && first.IncCustomBank == second.IncCustomBank
                 && first.IncUseGridThickness == second.IncUseGridThickness
                 && first.IncCustomThickness == second.IncCustomThickness
-                && first.FeatureIncUseGridOffset == second.FeatureIncUseGridOffset
-                && first.FeatureIncUseGridWidth == second.FeatureIncUseGridWidth
-                && first.FeatureIncUseGridBottomZ == second.FeatureIncUseGridBottomZ
-                && first.FeatureIncUseGridTopZ == second.FeatureIncUseGridTopZ
-                && first.FeatureIncUseGridBank == second.FeatureIncUseGridBank
-                && first.FeatureIncCustomOffset == second.FeatureIncCustomOffset
-                && first.FeatureIncCustomWidth == second.FeatureIncCustomWidth
-                && first.FeatureIncCustomBottomZ == second.FeatureIncCustomBottomZ
-                && first.FeatureIncCustomTopZ == second.FeatureIncCustomTopZ
-                && first.FeatureIncCustomBank == second.FeatureIncCustomBank;
+                && first.EdgeIncUseGridOffset == second.EdgeIncUseGridOffset
+                && first.EdgeIncUseGridWidth == second.EdgeIncUseGridWidth
+                && first.EdgeIncUseGridBottomZ == second.EdgeIncUseGridBottomZ
+                && first.EdgeIncUseGridTopZ == second.EdgeIncUseGridTopZ
+                && first.EdgeIncUseGridBank == second.EdgeIncUseGridBank
+                && first.EdgeIncCustomOffset == second.EdgeIncCustomOffset
+                && first.EdgeIncCustomWidth == second.EdgeIncCustomWidth
+                && first.EdgeIncCustomBottomZ == second.EdgeIncCustomBottomZ
+                && first.EdgeIncCustomTopZ == second.EdgeIncCustomTopZ
+                && first.EdgeIncCustomBank == second.EdgeIncCustomBank;
         }
     }
 
