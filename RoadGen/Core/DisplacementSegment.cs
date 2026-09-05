@@ -12,9 +12,16 @@ namespace RoadGen.Core;
 /// together with no cracks.</summary>
 public static class DisplacementSegment
 {
-    public static string Build(int solidId, Vec3[,] grid, double thicknessStart, double thicknessEnd, RoadSettings s, double textureVStart, out double textureVAdvance)
+    public static string Build(int solidId, Vec3[,] grid, double thicknessStart, double thicknessEnd, RoadSettings s, double textureVStart, out double textureVAdvance, int textureWidth = 0, int textureHeight = 0)
     {
         int res = grid.GetLength(0) - 1;
+
+        // Hammer face-edit "Fit" mode (per-track RoadSettings.FitTextures): every visible
+        // face is mapped so exactly ONE full texture fills it, anchored at its min U/V
+        // corner — the same result Hammer produces when you select a face and press Fit.
+        // Requires the material's real pixel size (textureWidth/Height); when it isn't
+        // known the face keeps the continuous TextureScale mapping instead.
+        bool fit = s.FitTextures && textureWidth > 0 && textureHeight > 0;
 
         // Three anchor corners; the fourth is implied (parallelogram completion).
         Vec3 A = grid[0, 0].Rounded(6);
@@ -74,7 +81,7 @@ public static class DisplacementSegment
         double texScale = s.TextureScale > 0 ? s.TextureScale : 0.25;
         double topUShift = -Vec3.Dot(uTop, A + colDir * 0.5) / texScale;
         double topVShift = (textureVStart - Vec3.Dot(vTop, A)) / texScale;
-        AppendSide(sb, 1, A, B, C, s.Material, uTop, vTop, A, s.TextureScale, s.LightmapScale, leaveOpen: true, uShiftOverride: topUShift, vShiftOverride: topVShift);
+        AppendSide(sb, 1, A, B, C, s.Material, uTop, vTop, A, s.TextureScale, s.LightmapScale, leaveOpen: true, uShiftOverride: topUShift, vShiftOverride: topVShift, fit: fit, fitTexW: textureWidth, fitTexH: textureHeight);
         AppendDispInfo(sb, res, A, normals, distances, s.Power, Vec3.UnitZ);
         sb.Append("\t\t}\r\n");
 
@@ -92,7 +99,7 @@ public static class DisplacementSegment
         // the same source-exact shifts so the underside shares the top's texture phase.
         double bottomUShift = -Vec3.Dot(uTop, A2 + colDir * 0.5) / texScale;
         double bottomVShift = (textureVStart - Vec3.Dot(vTop, A2)) / texScale;
-        AppendSide(sb, 2, B2, A2, D2, bottomMaterial, uTop, vTop, A2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidBottom, uShiftOverride: bottomUShift, vShiftOverride: bottomVShift);
+        AppendSide(sb, 2, B2, A2, D2, bottomMaterial, uTop, vTop, A2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidBottom, uShiftOverride: bottomUShift, vShiftOverride: bottomVShift, fit: fit, fitTexW: textureWidth, fitTexH: textureHeight);
         if (s.SolidBottom)
         {
             AppendBottomDispInfo(sb, res, B2, normals, distances, s.Power);
@@ -100,7 +107,7 @@ public static class DisplacementSegment
         }
 
         // Face 3: left wall, displaced to follow the road's left edge.
-        AppendSide(sb, 3, A2, B2, B, leftMaterial, null, null, A2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidLeft);
+        AppendSide(sb, 3, A2, B2, B, leftMaterial, null, null, A2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidLeft, fit: fit, fitTexW: textureWidth, fitTexH: textureHeight);
         if (s.SolidLeft)
         {
             AppendEdgeDispInfo(sb, res, A2, normals, distances, leftEdge: true, s.Power);
@@ -108,7 +115,7 @@ public static class DisplacementSegment
         }
 
         // Face 4: right wall, displaced to follow the road's right edge.
-        AppendSide(sb, 4, C2, D2, D, rightMaterial, null, null, C2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidRight);
+        AppendSide(sb, 4, C2, D2, D, rightMaterial, null, null, C2, s.TextureScale, s.LightmapScale, leaveOpen: s.SolidRight, fit: fit, fitTexW: textureWidth, fitTexH: textureHeight);
         if (s.SolidRight)
         {
             AppendEdgeDispInfo(sb, res, C2, normals, distances, leftEdge: false, s.Power);
@@ -116,10 +123,10 @@ public static class DisplacementSegment
         }
 
         // Face 5: side B-C (front seam, always nodraw).
-        AppendSide(sb, 5, B2, C2, C, "TOOLS/TOOLSNODRAW", null, null, B2, s.TextureScale, s.LightmapScale);
+        AppendSide(sb, 5, B2, C2, C, "TOOLS/TOOLSNODRAW", null, null, B2, s.TextureScale, s.LightmapScale, fit: fit, fitTexW: textureWidth, fitTexH: textureHeight);
 
         // Face 6: side A-D (back seam, always nodraw).
-        AppendSide(sb, 6, D2, A2, A, "TOOLS/TOOLSNODRAW", null, null, D2, s.TextureScale, s.LightmapScale);
+        AppendSide(sb, 6, D2, A2, A, "TOOLS/TOOLSNODRAW", null, null, D2, s.TextureScale, s.LightmapScale, fit: fit, fitTexW: textureWidth, fitTexH: textureHeight);
 
         sb.Append("\t\teditor\r\n\t\t{\r\n");
         sb.Append("\t\t\t\"color\" \"0 173 190\"\r\n");
@@ -144,7 +151,10 @@ public static class DisplacementSegment
         int lightmapScale,
         bool leaveOpen = false,
         double? uShiftOverride = null,
-        double? vShiftOverride = null)
+        double? vShiftOverride = null,
+        bool fit = false,
+        int fitTexW = 0,
+        int fitTexH = 0)
     {
         // For generic faces we derive texture axes from the face's parallelogram edges.
         // The implied fourth corner is p1 + p3 - p2, so the opposite edge is p3 - p2.
@@ -159,15 +169,52 @@ public static class DisplacementSegment
         // units. Default origin-anchored shifts are therefore divided by scale; callers
         // that thread a cumulative arc pass fully-computed overrides (already in /scale).
         double safeScale = scale != 0 ? scale : 1.0;
-        double uShift = uShiftOverride ?? -Vec3.Dot(u, origin) / safeScale;
-        double vShift = vShiftOverride ?? -Vec3.Dot(v, origin) / safeScale;
+
+        double uScaleOut = scale;
+        double vScaleOut = scale;
+        double uShift;
+        double vShift;
+
+        // Hammer face-edit "Fit" (Whole Face): keep the face's own axes but scale so
+        // exactly ONE full texture fills the face, anchored at the face's min-U/min-V
+        // corner. Measured over the real four corners of the face parallelogram, each
+        // axis getting its own scale (U and V can differ for non-square materials).
+        if (fit && fitTexW > 0 && fitTexH > 0)
+        {
+            Vec3 p4 = p1 + p3 - p2;
+            double u1 = Vec3.Dot(u, p1), u2 = Vec3.Dot(u, p2), u3 = Vec3.Dot(u, p3), u4 = Vec3.Dot(u, p4);
+            double v1 = Vec3.Dot(v, p1), v2 = Vec3.Dot(v, p2), v3 = Vec3.Dot(v, p3), v4 = Vec3.Dot(v, p4);
+            double minU = Math.Min(Math.Min(u1, u2), Math.Min(u3, u4));
+            double maxU = Math.Max(Math.Max(u1, u2), Math.Max(u3, u4));
+            double minV = Math.Min(Math.Min(v1, v2), Math.Min(v3, v4));
+            double maxV = Math.Max(Math.Max(v1, v2), Math.Max(v3, v4));
+            double fitScaleU = (maxU - minU) / fitTexW;
+            double fitScaleV = (maxV - minV) / fitTexH;
+            if (fitScaleU > 1e-9 && fitScaleV > 1e-9)
+            {
+                uShift = -minU / fitScaleU;
+                vShift = -minV / fitScaleV;
+                uScaleOut = fitScaleU;
+                vScaleOut = fitScaleV;
+            }
+            else
+            {
+                uShift = uShiftOverride ?? -Vec3.Dot(u, origin) / safeScale;
+                vShift = vShiftOverride ?? -Vec3.Dot(v, origin) / safeScale;
+            }
+        }
+        else
+        {
+            uShift = uShiftOverride ?? -Vec3.Dot(u, origin) / safeScale;
+            vShift = vShiftOverride ?? -Vec3.Dot(v, origin) / safeScale;
+        }
 
         sb.Append("\t\tside\r\n\t\t{\r\n");
         sb.Append("\t\t\t\"id\" \"").Append(id).Append("\"\r\n");
         sb.Append("\t\t\t\"plane\" \"").Append(Vmf.Point(p1)).Append(' ').Append(Vmf.Point(p2)).Append(' ').Append(Vmf.Point(p3)).Append("\"\r\n");
         sb.Append("\t\t\t\"material\" \"").Append(material).Append("\"\r\n");
-        sb.Append("\t\t\t\"uaxis\" \"[").Append(Vmf.Vec(u)).Append(' ').Append(Vmf.Num(uShift)).Append("] ").Append(Vmf.Num(scale)).Append("\"\r\n");
-        sb.Append("\t\t\t\"vaxis\" \"[").Append(Vmf.Vec(v)).Append(' ').Append(Vmf.Num(vShift)).Append("] ").Append(Vmf.Num(scale)).Append("\"\r\n");
+        sb.Append("\t\t\t\"uaxis\" \"[").Append(Vmf.Vec(u)).Append(' ').Append(Vmf.Num(uShift)).Append("] ").Append(Vmf.Num(uScaleOut)).Append("\"\r\n");
+        sb.Append("\t\t\t\"vaxis\" \"[").Append(Vmf.Vec(v)).Append(' ').Append(Vmf.Num(vShift)).Append("] ").Append(Vmf.Num(vScaleOut)).Append("\"\r\n");
         sb.Append("\t\t\t\"rotation\" \"0\"\r\n");
         sb.Append("\t\t\t\"lightmapscale\" \"").Append(lightmapScale).Append("\"\r\n");
         sb.Append("\t\t\t\"smoothing_groups\" \"0\"\r\n");

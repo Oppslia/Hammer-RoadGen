@@ -182,6 +182,7 @@ public sealed class UndoManager
                 && first.SolidBottom == second.SolidBottom
                 && first.SegmentLength == second.SegmentLength
                 && first.TextureScale == second.TextureScale
+                && first.FitTextures == second.FitTextures
                 && first.LightmapScale == second.LightmapScale
                 && first.Snap == second.Snap
                 && first.SnapEnabled == second.SnapEnabled

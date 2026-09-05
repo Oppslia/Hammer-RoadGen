@@ -1,13 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Text;
+using RoadGen.Core.Vtf;
 
 namespace RoadGen.Core;
 
 /// <summary>Turns a road document into a complete VMF file.</summary>
 public static class RoadGenerator
 {
-    public static string GenerateVmf(RoadDocument document, Cordon cordon = null)
+    public static string GenerateVmf(RoadDocument document, Cordon cordon = null, VtfMaterialCache textures = null)
     {
         StringBuilder output = new StringBuilder();
         output.Append(Vmf.Header);
@@ -35,7 +37,7 @@ public static class RoadGenerator
                 continue;
             }
 
-            AppendDisplacementChain(output, chain, ref solidId);
+            AppendDisplacementChain(output, chain, ref solidId, textures);
             generatedAnyTrack = true;
         }
 
@@ -43,7 +45,7 @@ public static class RoadGenerator
         // joined road's sidewalk continues through the junction.
         foreach (RoadChain chain in chains)
         {
-            AppendEdgeFeatures(output, chain, ref solidId);
+            AppendEdgeFeatures(output, chain, ref solidId, textures);
         }
 
         if (!generatedAnyTrack)
@@ -59,6 +61,34 @@ public static class RoadGenerator
 
         output.Append(Vmf.Footer);
         return output.ToString();
+    }
+
+    /// <summary>Resolves a material's texture pixel size for Hammer face-fit export. When
+    /// the material can't be resolved (no cache, or it fell back to the checkerboard) a
+    /// nominal 128x128 is returned — fit then still maps one tile per face at that size.
+    /// The caller only uses these when the segment's RoadSettings.FitTextures is set.</summary>
+    private static void ResolveTextureSize(VtfMaterialCache textures, string material, out int texW, out int texH)
+    {
+        texW = 128;
+        texH = 128;
+        if (textures == null)
+        {
+            return;
+        }
+
+        try
+        {
+            Bitmap bmp = textures.GetMaterialBitmap(material);
+            if (bmp != null && !textures.IsFallback(bmp) && bmp.Width > 0 && bmp.Height > 0)
+            {
+                texW = bmp.Width;
+                texH = bmp.Height;
+            }
+        }
+        catch
+        {
+            // Keep the nominal size; a missing texture falls back to the checkerboard.
+        }
     }
 
     /// <summary>Whether a track's road geometry reaches the cordon. The track's bounding box
@@ -100,7 +130,7 @@ public static class RoadGenerator
         return Cordon.Intersects(cordon.Mins, cordon.Maxs, mins - pad, maxs + pad);
     }
 
-    private static void AppendEdgeFeatures(StringBuilder output, RoadChain chain, ref int solidId)
+    private static void AppendEdgeFeatures(StringBuilder output, RoadChain chain, ref int solidId, VtfMaterialCache textures)
     {
         if (chain.Points.Count < 2)
         {
@@ -140,6 +170,7 @@ public static class RoadGenerator
                 {
                     Material = feature.Material,
                     TextureScale = segmentSettings.TextureScale,
+                    FitTextures = segmentSettings.FitTextures,
                     LightmapScale = segmentSettings.LightmapScale,
                     Power = power,
                     // A left strip stores its columns outer-first, so the builder's
@@ -169,7 +200,8 @@ public static class RoadGenerator
 
                     double thicknessStart = FeatureThicknessAt(chainFeature, t0);
                     double thicknessEnd = FeatureThicknessAt(chainFeature, t1);
-                    output.Append(DisplacementSegment.Build(solidId++, grid, thicknessStart, thicknessEnd, featureSettings, textureV, out double textureAdvance));
+                    ResolveTextureSize(textures, featureSettings.Material, out int fw, out int fh);
+                    output.Append(DisplacementSegment.Build(solidId++, grid, thicknessStart, thicknessEnd, featureSettings, textureV, out double textureAdvance, fw, fh));
                     textureV += textureAdvance;
                 }
             }
@@ -283,7 +315,7 @@ public static class RoadGenerator
         return point.TopOffset - point.BottomOffset;
     }
 
-    private static void AppendDisplacementChain(StringBuilder output, RoadChain chain, ref int solidId)
+    private static void AppendDisplacementChain(StringBuilder output, RoadChain chain, ref int solidId, VtfMaterialCache textures)
     {
         List<RoadPoint> points = chain.Points;
 
@@ -308,7 +340,8 @@ public static class RoadGenerator
                 Vec3[,] grid = RoadSurface.SampleGrid(points, startT, endT, resolution, walker, chain.Closed, twist);
                 double thicknessStart = RoadCurve.Thickness(points, startT, chain.Closed);
                 double thicknessEnd = RoadCurve.Thickness(points, endT, chain.Closed);
-                output.Append(DisplacementSegment.Build(solidId++, grid, thicknessStart, thicknessEnd, settings, textureV, out double textureAdvance));
+                ResolveTextureSize(textures, settings.Material, out int rw, out int rh);
+                output.Append(DisplacementSegment.Build(solidId++, grid, thicknessStart, thicknessEnd, settings, textureV, out double textureAdvance, rw, rh));
                 textureV += textureAdvance;
             }
         }

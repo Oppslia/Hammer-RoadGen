@@ -107,6 +107,7 @@ public static class TrackFile
         public bool SolidBottom { get; set; }
         public double SegmentLength { get; set; }
         public double TextureScale { get; set; }
+        public bool FitTextures { get; set; }
         public int LightmapScale { get; set; }
         public double Snap { get; set; } = 64;
         public bool SnapEnabled { get; set; } = true;
@@ -167,6 +168,7 @@ public static class TrackFile
                     SolidBottom = track.Settings.SolidBottom,
                     SegmentLength = track.Settings.SegmentLength,
                     TextureScale = track.Settings.TextureScale,
+                    FitTextures = track.Settings.FitTextures,
                     LightmapScale = track.Settings.LightmapScale,
                     Snap = track.Settings.Snap,
                     SnapEnabled = track.Settings.SnapEnabled,
@@ -370,6 +372,7 @@ public static class TrackFile
         settings.SolidBottom = data.SolidBottom;
         settings.SegmentLength = data.SegmentLength;
         settings.TextureScale = data.TextureScale;
+        settings.FitTextures = data.FitTextures;
         settings.LightmapScale = data.LightmapScale;
         settings.Snap = data.Snap;
         settings.SnapEnabled = data.SnapEnabled;

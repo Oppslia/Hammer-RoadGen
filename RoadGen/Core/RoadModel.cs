@@ -50,6 +50,13 @@ public sealed class RoadSettings
     /// <summary>Texture scale written to the displacement face.</summary>
     public double TextureScale = 0.25;
 
+    /// <summary>When true, every generated face is texture-mapped the way Hammer's
+    /// face-edit "Fit" (Whole Face) button maps it: the material is scaled so exactly ONE
+    /// full texture fills each face, anchored at the face's minimum U/V corner. This
+    /// overrides <see cref="TextureScale"/> (which otherwise controls world units per
+    /// tile). It mirrors Hammer, which fits each selected face to its own extents.</summary>
+    public bool FitTextures = false;
+
     /// <summary>Lightmap scale for every face.</summary>
     public int LightmapScale = 16;
 
@@ -113,6 +120,7 @@ public sealed class RoadSettings
             SolidBottom = SolidBottom,
             SegmentLength = SegmentLength,
             TextureScale = TextureScale,
+            FitTextures = FitTextures,
             LightmapScale = LightmapScale,
             Snap = Snap,
             SnapEnabled = SnapEnabled,

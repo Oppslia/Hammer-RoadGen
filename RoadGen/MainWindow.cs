@@ -124,6 +124,7 @@ public sealed partial class MainWindow : Form
     private readonly CheckBox _chkSolidLeft = new CheckBox();
     private readonly CheckBox _chkSolidRight = new CheckBox();
     private readonly CheckBox _chkSolidBottom = new CheckBox();
+    private readonly CheckBox _chkFitTextures = new CheckBox();
 
     // Per-editor increment controls ("Increment/Decrement interval" section).
     private readonly CheckBox _chkIncX = new CheckBox();
@@ -528,16 +529,16 @@ public sealed partial class MainWindow : Form
         TableLayoutPanel roadSettingsInputs = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 135,
+            Height = 138,
             ColumnCount = 2,
-            RowCount = 5,
+            RowCount = 6,
             Padding = new Padding(0)
         };
         roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         roadSettingsInputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int r = 0; r < 5; r++)
+        for (int r = 0; r < 6; r++)
         {
-            roadSettingsInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
+            roadSettingsInputs.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
         }
 
         _cboPower.Items.AddRange(new object[] { 2, 3, 4 });
@@ -563,6 +564,12 @@ public sealed partial class MainWindow : Form
         _numTexScale.Increment = 0.25m;
         AddSettingRow(roadSettingsInputs, 3, "Lightmap scale", _cboLightmap);
         AddSettingRow(roadSettingsInputs, 4, "Grid snap", _cboSnap);
+
+        // Hammer face-edit "Fit" (Whole Face) per track: one full texture per exported
+        // face. When on, Texture scale is ignored for that track.
+        _chkFitTextures.Text = "Whole face (one per segment)";
+        _chkFitTextures.ForeColor = Color.LightGray;
+        AddSettingRow(roadSettingsInputs, 5, "Fit", _chkFitTextures);
 
         // Solid Roads + Enable track joining, directly under the point table.
         GroupBox solidRoadsSection = new GroupBox
@@ -1556,6 +1563,7 @@ public sealed partial class MainWindow : Form
         _numTexScale.ValueChanged += (s, e) => ApplySettingsFromControls();
         _cboLightmap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
         _cboSnap.SelectedIndexChanged += (s, e) => ApplySettingsFromControls();
+        _chkFitTextures.CheckedChanged += (s, e) => ApplySettingsFromControls();
         _gridCombo.SelectedIndexChanged += (s, e) => ApplyGridCombo();
         _btnSnap.CheckedChanged += (s, e) => ApplySnapToggle();
         _btnTextures.CheckedChanged += (s, e) => ApplyTexturesToggle();
@@ -1620,6 +1628,7 @@ public sealed partial class MainWindow : Form
         AttachUndoBatch(_chkSolidLeft);
         AttachUndoBatch(_chkSolidRight);
         AttachUndoBatch(_chkSolidBottom);
+        AttachUndoBatch(_chkFitTextures);
         AttachUndoBatch(_chkEnableJoining);
         AttachUndoBatch(_cboPower);
         AttachUndoBatch(_txtMaterial);
@@ -3130,6 +3139,7 @@ public sealed partial class MainWindow : Form
         settings.TextureScale = (double)_numTexScale.Value;
         settings.LightmapScale = (int)_cboLightmap.SelectedItem;
         settings.Snap = (int)_cboSnap.SelectedItem;
+        settings.FitTextures = _chkFitTextures.Checked;
         settings.SolidLeft = _chkSolidLeft.Checked;
         settings.SolidRight = _chkSolidRight.Checked;
         settings.SolidBottom = _chkSolidBottom.Checked;
@@ -3398,6 +3408,7 @@ public sealed partial class MainWindow : Form
         _numTexScale.Value = (decimal)settings.TextureScale;
         _cboLightmap.SelectedIndex = LightmapIndex(settings.LightmapScale);
         _cboSnap.SelectedIndex = SnapIndex(settings.Snap);
+        _chkFitTextures.Checked = settings.FitTextures;
         _btnSnap.Checked = settings.SnapEnabled;
         _btnSnap.Text = settings.SnapEnabled ? "Snap on" : "Snap off";
         SyncGridCombo();
@@ -3730,7 +3741,7 @@ public sealed partial class MainWindow : Form
 
         try
         {
-            string vmf = RoadGenerator.GenerateVmf(_doc, _cordon);
+            string vmf = RoadGenerator.GenerateVmf(_doc, _cordon, _v3d.MaterialCache);
             System.IO.File.WriteAllText(dlg.FileName, vmf);
             MessageBox.Show(this, $"Wrote {dlg.FileName}", "RoadGen", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }

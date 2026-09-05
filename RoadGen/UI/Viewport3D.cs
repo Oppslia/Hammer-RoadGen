@@ -832,6 +832,16 @@ public sealed class Viewport3D : Control
                     continue;
                 }
 
+                // Hammer "Fit": each exported piece is one full texture anchored at its
+                // start, so the preview must subdivide into the SAME export pieces (one per
+                // control-point segment, split like the exporter does by SegmentLength).
+                if (span.Track.Settings.FitTextures)
+                {
+                    DrawFittedPieces(road.Left, road.Right, arc, chain.Points, chain.Closed,
+                        span.StartPoint, span.EndPoint - 1, 0, span.Track.Settings, steps);
+                    continue;
+                }
+
                 int startIndex = span.StartPoint * steps;
                 int endIndex = (span.EndPoint - 1) * steps;
                 FillTexturedStrip(road.Left, road.Right, arc, startIndex, endIndex,
@@ -849,6 +859,7 @@ public sealed class Viewport3D : Control
 
             RoadSettings chainSettings = chain.Spans.Count > 0 ? chain.Spans[0].Track?.Settings : null;
             double featureScale = chainSettings?.TextureScale ?? 0.25;
+            bool featureFit = chainSettings?.FitTextures ?? false;
             foreach (ChainFeature chainFeature in chain.CollectFeatures())
             {
                 EdgePreviewMesh mesh = EdgePreviewMesh.Build(chain.Points, steps, chainFeature, chain.Closed);
@@ -858,6 +869,19 @@ public sealed class Viewport3D : Control
                 }
 
                 double[] arc = CumulativeAlong(mesh.InnerTop, mesh.OuterTop);
+                if (featureFit && chainSettings != null)
+                {
+                    // Fit mirrors the road: one texture per exported piece. The feature mesh
+                    // samples start at the feature's own chain index, so base the per-segment
+                    // split on the feature's start point (same segments the exporter writes,
+                    // clamped exactly like EdgePreviewMesh.Build clamps its own sample range).
+                    int featStart = Math.Clamp(chainFeature.StartPoint, 0, chain.Points.Count - 1);
+                    int featEnd = Math.Clamp(chainFeature.EndPoint, featStart + 1, chain.Points.Count);
+                    DrawFittedPieces(mesh.InnerTop, mesh.OuterTop, arc, chain.Points, chain.Closed,
+                        featStart, featEnd - 1, featStart * steps, chainSettings, steps);
+                    continue;
+                }
+
                 FillTexturedStrip(mesh.InnerTop, mesh.OuterTop, arc, 0, mesh.InnerTop.Count - 1,
                     chainFeature.Feature.Material, featureScale);
             }
@@ -924,6 +948,93 @@ public sealed class Viewport3D : Control
             var b = new TextureRasterizer.Vertex(o0, (float)uH0, (float)v0);
             var c = new TextureRasterizer.Vertex(i1, (float)uL1, (float)v1);
             var d = new TextureRasterizer.Vertex(o1, (float)uH1, (float)v1);
+
+            TextureRasterizer.FillTriangle(_frameBuffer, a, b, c,
+                _eye, _forward, _right, _up, (float)_focal, Width, Height,
+                bits, texture.Width, texture.Height, fallback);
+            TextureRasterizer.FillTriangle(_frameBuffer, b, d, c,
+                _eye, _forward, _right, _up, (float)_focal, Width, Height,
+                bits, texture.Width, texture.Height, fallback);
+        }
+    }
+
+    /// <summary>Subdivides the chain segments <c>[segStart, segEnd)</c> into the exporter's
+    /// pieces (each control-point segment split by SegmentLength) and draws every piece as one
+    /// full texture, mirroring Hammer's per-face "Fit". <paramref name="inner"/>/<paramref name="outer"/>
+    /// hold the strip edges; element <c>k</c> is the chain sample at index
+    /// <c>baseSampleIndex + k</c> (0 for the road mesh, which is sampled from the chain start).</summary>
+    private void DrawFittedPieces(IReadOnlyList<Vec3> inner, IReadOnlyList<Vec3> outer, double[] arc,
+        IReadOnlyList<RoadPoint> chainPoints, bool closed, int segStart, int segEnd,
+        int baseSampleIndex, RoadSettings settings, int steps)
+    {
+        int maxSeg = chainPoints.Count - 1;
+        double maxSegment = Math.Max(1.0, settings.SegmentLength);
+        for (int seg = segStart; seg < segEnd && seg < maxSeg; seg++)
+        {
+            double arcLen = RoadCurve.ArcLength(chainPoints, seg, closed);
+            int subdivision = Math.Max(1, (int)Math.Round(arcLen / maxSegment));
+            for (int piece = 0; piece < subdivision; piece++)
+            {
+                int s0 = seg * steps + (int)((long)steps * piece / subdivision) - baseSampleIndex;
+                int s1 = seg * steps + (int)((long)steps * (piece + 1) / subdivision) - baseSampleIndex;
+                if (s1 <= s0)
+                {
+                    s1 = s0 + 1;
+                }
+
+                FillFittedPiece(inner, outer, arc, s0, s1, settings.Material);
+            }
+        }
+    }
+
+    /// <summary>Draws one fitted piece: samples <c>[startIndex, endIndex)</c> as textured quads
+    /// where U runs 0..1 across the strip and V runs 0..1 along the piece (one full texture per
+    /// piece, top-left anchored at the piece start — Hammer's face-edit "Fit" result).</summary>
+    private void FillFittedPiece(IReadOnlyList<Vec3> inner, IReadOnlyList<Vec3> outer, double[] arc,
+        int startIndex, int endIndex, string material)
+    {
+        int max = Math.Min(inner.Count, outer.Count);
+        startIndex = Math.Clamp(startIndex, 0, max - 1);
+        endIndex = Math.Clamp(endIndex, startIndex + 1, max - 1);
+        if (startIndex >= endIndex)
+        {
+            return;
+        }
+
+        Bitmap texture = MaterialCache.GetMaterialBitmap(material);
+        bool fallback = MaterialCache.IsFallback(texture);
+        if (texture.Width <= 0 || texture.Height <= 0)
+        {
+            return;
+        }
+
+        int[] bits = GetTexturePixels(texture);
+        double a0 = startIndex < arc.Length ? arc[startIndex] : 0;
+        double a1 = endIndex < arc.Length ? arc[endIndex] : a0;
+        double span = a1 - a0;
+        if (span < 1e-4)
+        {
+            span = 1.0;
+        }
+
+        for (int i = startIndex; i < endIndex; i++)
+        {
+            Vec3 i0 = inner[i];
+            Vec3 o0 = outer[i];
+            Vec3 i1 = inner[i + 1];
+            Vec3 o1 = outer[i + 1];
+            if (VecLength(o0 - i0) < 1e-4 || VecLength(o1 - i1) < 1e-4)
+            {
+                continue;
+            }
+
+            double v0 = i < arc.Length ? (arc[i] - a0) / span : 0;
+            double v1 = i + 1 < arc.Length ? (arc[i + 1] - a0) / span : v0;
+
+            var a = new TextureRasterizer.Vertex(i0, 0.0f, (float)v0);
+            var b = new TextureRasterizer.Vertex(o0, 1.0f, (float)v0);
+            var c = new TextureRasterizer.Vertex(i1, 0.0f, (float)v1);
+            var d = new TextureRasterizer.Vertex(o1, 1.0f, (float)v1);
 
             TextureRasterizer.FillTriangle(_frameBuffer, a, b, c,
                 _eye, _forward, _right, _up, (float)_focal, Width, Height,
