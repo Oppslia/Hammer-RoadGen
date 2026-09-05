@@ -180,7 +180,10 @@ public sealed class MaterialBrowserDialog : Form
 
     private List<string> CurrentList()
     {
-        bool usedOnly = _chkUsed.Checked && _used.Count > 0;
+        // Only-used is strict: when checked, show exactly the imported layout's materials.
+        // An empty used set (no layout loaded) then means an empty grid — NOT "show all",
+        // which was misleading when the fallback previously kicked in.
+        bool usedOnly = _chkUsed.Checked;
         string[] tokens = SplitTokens(_filter.Text);
         var visible = new List<string>();
         foreach (string name in _all)

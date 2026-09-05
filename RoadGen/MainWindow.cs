@@ -20,10 +20,8 @@ public sealed partial class MainWindow : Form
     private ToolStripButton _btnImport;
     private ToolStripButton _btnImportLayout;
     private ToolStripButton _btnNew;
-    private ToolStripButton _btnAddPoint;
-    private ToolStripButton _btnRemovePoint;
-    private ToolStripButton _btnMoveUp;
-    private ToolStripButton _btnMoveDown;
+    private Button _btnAddPoint;
+    private Button _btnRemovePoint;
     private ToolStripButton _btnFrame;
     private ToolStripButton _btnGenerate;
     private ToolStrip _topActionBar;
@@ -264,15 +262,6 @@ public sealed partial class MainWindow : Form
         _btnNew = ToolButton("New", (s, e) => NewRoad());
         topActionBar.Items.Add(_btnNew);
         topActionBar.Items.Add(new ToolStripSeparator());
-        _btnAddPoint = ToolButton("Add Point", (s, e) => AddPoint());
-        _btnRemovePoint = ToolButton("Remove Point", (s, e) => RemovePoint());
-        _btnMoveUp = ToolButton("Move Up", (s, e) => MovePoint(-1));
-        _btnMoveDown = ToolButton("Move Down", (s, e) => MovePoint(1));
-        topActionBar.Items.Add(_btnAddPoint);
-        topActionBar.Items.Add(_btnRemovePoint);
-        topActionBar.Items.Add(_btnMoveUp);
-        topActionBar.Items.Add(_btnMoveDown);
-        topActionBar.Items.Add(new ToolStripSeparator());
         _btnFrame = ToolButton("Frame All", (s, e) => FrameAll());
         topActionBar.Items.Add(_btnFrame);
         topActionBar.Items.Add(_btnSnap);
@@ -507,9 +496,9 @@ public sealed partial class MainWindow : Form
         _list.HideSelection = false;
         _list.GridLines = true;
         _list.Columns.Add("#", 34, HorizontalAlignment.Left);
-        _list.Columns.Add("X", 60, HorizontalAlignment.Right);
-        _list.Columns.Add("Y", 60, HorizontalAlignment.Right);
-        _list.Columns.Add("Z", 60, HorizontalAlignment.Right);
+        _list.Columns.Add("X", 58, HorizontalAlignment.Right);
+        _list.Columns.Add("Y", 58, HorizontalAlignment.Right);
+        _list.Columns.Add("Z", 58, HorizontalAlignment.Right);
         _list.Columns.Add("Width", 62, HorizontalAlignment.Right);
         _list.Columns.Add("Bank", 62, HorizontalAlignment.Right);
         _list.Columns.Add("Thickness", 70, HorizontalAlignment.Right);
@@ -518,7 +507,7 @@ public sealed partial class MainWindow : Form
         // mirroring the Edge Features rows): label | Grid ☑ + step | value.
         TableLayoutPanel controlPointEditorRows = new TableLayoutPanel
         {
-            Dock = DockStyle.Bottom,
+            Dock = DockStyle.Top,
             Height = 150,
             ColumnCount = 3,
             RowCount = 6,
@@ -551,7 +540,7 @@ public sealed partial class MainWindow : Form
         // Road settings inputs.
         TableLayoutPanel roadSettingsInputs = new TableLayoutPanel
         {
-            Dock = DockStyle.Bottom,
+            Dock = DockStyle.Top,
             Height = 135,
             ColumnCount = 2,
             RowCount = 5,
@@ -625,14 +614,90 @@ public sealed partial class MainWindow : Form
         solidRoadsJoiningRow.Controls.Add(_chkEnableJoining);
         solidRoadsSection.Controls.Add(solidRoadsJoiningRow);
 
-        // Docking stacks in reverse z-order (last added docks first), so children
-        // are added bottom-up: Solid Roads, road settings, editor rows, point table,
-        // track list, header. The track action buttons live in the track list's
-        // right-hand column, so there is no bottom action row.
-        trackSection.Controls.Add(solidRoadsSection);
-        trackSection.Controls.Add(roadSettingsInputs);
-        trackSection.Controls.Add(controlPointEditorRows);
-        trackSection.Controls.Add(_list);
+        // Bottom band holds the reduced road-settings / selected-point editor as two columns:
+        // [Add Point / Remove Point] on the LEFT, the properties filling the rest of the width.
+        // The point table + Solid Roads sit ABOVE this band, full width (Move Up/Down are
+        // removed entirely; Ctrl+A / Del still add/remove points).
+        Panel propertiesColumn = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(4, 4, 0, 0)
+        };
+
+        roadSettingsInputs.Dock = DockStyle.Top;
+        controlPointEditorRows.Dock = DockStyle.Top;
+        propertiesColumn.Controls.Add(controlPointEditorRows);
+        propertiesColumn.Controls.Add(roadSettingsInputs);
+
+        // "Track controls" box: Add Point / Remove Point, top-aligned (no vertical centering)
+        // but centered horizontally as a fixed-width pair (two flexible columns around it).
+        GroupBox trackControlsSection = new GroupBox
+        {
+            Text = "Track controls",
+            Dock = DockStyle.Left,
+            Width = 110,
+            Padding = new Padding(4, 2, 4, 4),
+            ForeColor = Color.LightGray
+        };
+
+        TableLayoutPanel trackControlsCenter = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 1,
+            Padding = new Padding(0)
+        };
+
+        trackControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        trackControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+        trackControlsCenter.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        trackControlsCenter.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        _btnAddPoint = new Button { Text = "Add Point", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 4) };
+        _btnRemovePoint = new Button { Text = "Remove Point", Dock = DockStyle.Fill, Margin = new Padding(0) };
+        StyleLayerButton(_btnAddPoint);
+        StyleLayerButton(_btnRemovePoint);
+        _btnAddPoint.Click += (s, e) => AddPoint();
+        _btnRemovePoint.Click += (s, e) => RemovePoint();
+
+        TableLayoutPanel trackControlsButtons = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 1,
+            RowCount = 2,
+            Height = 60,
+            Padding = new Padding(0)
+        };
+
+        trackControlsButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        trackControlsButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        trackControlsButtons.Controls.Add(_btnAddPoint, 0, 0);
+        trackControlsButtons.Controls.Add(_btnRemovePoint, 0, 1);
+
+        trackControlsCenter.Controls.Add(trackControlsButtons, 1, 0);
+        trackControlsSection.Controls.Add(trackControlsCenter);
+
+        Panel bottomColumns = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 300,
+            Padding = new Padding(0)
+        };
+        
+        bottomColumns.Controls.Add(propertiesColumn);     // Fill (processed last, fills the rest)
+        bottomColumns.Controls.Add(trackControlsSection); // Left (processed first, left edge)
+
+        // Point table + Solid Roads, full width, above the bottom columns.
+        Panel pointTableArea = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0) };
+        solidRoadsSection.Dock = DockStyle.Bottom;
+        pointTableArea.Controls.Add(_list);
+        pointTableArea.Controls.Add(solidRoadsSection);
+
+        // Docking is in reverse z-order (last added docks first): the track header is added
+        // last so it docks to the top, the bottom columns were added before it (bottom), and
+        // the point-table area fills between them.
+        trackSection.Controls.Add(pointTableArea);
+        trackSection.Controls.Add(bottomColumns);
         trackSection.Controls.Add(trackListHost);
 
         // ── Optimization section (standalone group, sits at the bottom of the
@@ -1026,6 +1091,19 @@ public sealed partial class MainWindow : Form
     private HashSet<string> CollectLayoutMaterials()
     {
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Materials on the roads being edited: every track's road surface material plus the
+        // materials of the edge features (sidewalks/guardrails) riding on it.
+        foreach (Track track in _doc.Tracks)
+        {
+            AddMaterial(used, track.Settings?.Material);
+            foreach (EdgeFeature feature in track.EdgeFeatures)
+            {
+                AddMaterial(used, feature.Material);
+            }
+        }
+
+        // Materials referenced by the imported layout (brush + displacement faces).
         VmfWorld world = _layoutWorld;
         if (world == null)
         {
@@ -1036,24 +1114,25 @@ public sealed partial class MainWindow : Form
         {
             foreach (VmfFace face in brush.Faces)
             {
-                string name = VtfMaterialCache.NormalizeMaterialName(face.Material);
-                if (name.Length > 0)
-                {
-                    used.Add(name);
-                }
+                AddMaterial(used, face.Material);
             }
         }
 
         foreach (VmfDisplacement displacement in world.Displacements)
         {
-            string name = VtfMaterialCache.NormalizeMaterialName(displacement.Material);
-            if (name.Length > 0)
-            {
-                used.Add(name);
-            }
+            AddMaterial(used, displacement.Material);
         }
 
         return used;
+    }
+
+    private static void AddMaterial(HashSet<string> used, string material)
+    {
+        string name = VtfMaterialCache.NormalizeMaterialName(material);
+        if (name.Length > 0)
+        {
+            used.Add(name);
+        }
     }
 
     private bool TryGetTrackBounds(out Vec3 mins, out Vec3 maxs)
@@ -3670,10 +3749,10 @@ public sealed partial class MainWindow : Form
 
         // Set the distance first (validated against the current width), then the
         // min sizes (validated against the distance), then re-clamp the distance.
-        int distance = Math.Max(50, width - 460);
+        int distance = Math.Max(60, width - 480);
         _split.SplitterDistance = distance;
         _split.Panel1MinSize = Math.Min(380, _split.SplitterDistance);
-        _split.Panel2MinSize = Math.Min(360, width - _split.SplitterDistance);
+        _split.Panel2MinSize = Math.Min(440, width - _split.SplitterDistance);
 
         distance = Math.Max(_split.Panel1MinSize, _split.SplitterDistance);
         distance = Math.Min(distance, width - _split.Panel2MinSize);

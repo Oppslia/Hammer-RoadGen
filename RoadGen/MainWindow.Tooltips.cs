@@ -22,8 +22,6 @@ public sealed partial class MainWindow
         _tooltipManager.Attach(_btnNew, "Start a new empty road");
         _tooltipManager.Attach(_btnAddPoint, "Add a control point (Ctrl+A)");
         _tooltipManager.Attach(_btnRemovePoint, "Remove the selected control point (Del)");
-        _tooltipManager.Attach(_btnMoveUp, "Move the selected point later in the list");
-        _tooltipManager.Attach(_btnMoveDown, "Move the selected point earlier in the list");
         _tooltipManager.Attach(_btnFrame, "Fit the road to the view (Ctrl+F)");
         _tooltipManager.Attach(_btnUndo, "Undo (Ctrl+Z)");
         _tooltipManager.Attach(_btnRedo, "Redo (Ctrl+Y)");
